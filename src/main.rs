@@ -304,16 +304,20 @@ pub mod game {
         hand: Vec<Card>,
         won_cards: Vec<Card>,
         team: Team,
+        dealer: bool,
+        beginner: bool,
     }
 
     impl Player {
         // create a new player
-        fn new(name: String) -> Player {
+        fn new(name: String, dealer: bool) -> Player {
             Player {
                 name,
                 hand: Vec::new(),
                 won_cards: Vec::new(),
                 team: Team::Contra,
+                dealer,
+                beginner: false,
             }
         }
 
@@ -361,11 +365,22 @@ pub mod game {
             }
         }
 
+        // function to make a call
+        fn make_call(&self) -> Option<MatchType> {
+            // for simplicity, we just return a random call
+            // in a real game, this would be more complex
+            Some(MatchType::Normal)
+        }
+
         // if the player wins a round, he collects the cards
         fn collect_won_cards(&mut self, cards: &Vec<Card>) {
             self.won_cards.extend(cards);
         }
 
+        // sum the eyes of the won cards to determine the eye_score
+        pub fn get_eye_score(&self) -> u32 {
+            self.won_cards.iter().map(|c| c.eyes as u32).sum()
+        }
     }
 
     pub trait Winnable {
@@ -451,7 +466,7 @@ pub mod game {
             self.init_round(players.len(), last_rounds_winner);
 
             // each player plays one card
-            for i in 0..players.len() {
+            for _i in 0..players.len() {
                 let card = players[self.current_player].play_card(self);
 
                 self.current_player = (self.current_player + 1) % players.len();
@@ -509,7 +524,32 @@ pub mod game {
     pub struct Match {
         rounds: Vec<Round>,
         deck: Vec<Card>,
-        match_type: MatchType,
+        match_type: MatchType, // type of match
+        n_rounds: usize,       // number of rounds in the match
+    }
+
+    impl Winnable for Match {
+        type Winner = Team;
+        type CheckType = u32;
+
+        fn determine_winner(&self, check_values: &Vec<&Self::CheckType>) -> Option<Self::Winner> {
+            if check_values.len() < 2 {
+                return None;
+            } else {
+                // // filter by team of player, sum their eye scores
+                // let re_score = self.get_team_score(check_values, Team::Re);
+                // let contra_score = self.get_team_score(check_values, Team::Contra);
+
+                // Contra wins if teams are equal
+                let contra_score = check_values[0];
+                let re_score = check_values[1];
+                if re_score <= contra_score {
+                    Some(Team::Contra)
+                } else {
+                    Some(Team::Re)
+                }
+            }
+        }
     }
 
     impl Match {
@@ -518,24 +558,52 @@ pub mod game {
                 rounds: Vec::new(),
                 deck: Vec::new(),
                 match_type: MatchType::Normal,
+                n_rounds: 0,
             }
         }
 
-        pub fn play_match(
+        fn set_num_rounds(&mut self, n_rounds: usize) {
+            self.n_rounds = n_rounds;
+            // reserve space for rounds
+            if self.rounds.capacity() < n_rounds {
+                // reserve space for rounds
+                self.rounds.reserve(n_rounds - self.rounds.capacity());
+            }
+        }
+
+        fn set_dealer_and_beginner(&mut self, players: &mut Vec<&mut Player>) {
+            assert!(players.len() > 0, "No players in the game");
+
+            // find index of dealer and beginner
+            let d_idx_old = match players.iter().position(|p| p.dealer) {
+                Some(i) => i,
+                None => players.len() - 1,
+            };
+
+            // new dealer sits one to the left of the old dealer
+            let d_idx_new = (d_idx_old + 1) % players.len();
+            // old beginner is the new dealer
+            let b_idx_old = d_idx_new;
+            // new beginner sits one to the left of the old beginner
+            let b_idx_new = (b_idx_old + 1) % players.len();
+
+            // set the new dealer and beginner
+            players[d_idx_old].dealer = false;
+            players[d_idx_new].dealer = true;
+            players[b_idx_old].beginner = false;
+            players[b_idx_new].beginner = true;
+        }
+
+        fn init_match(
             &mut self,
             players: &mut Vec<&mut Player>,
-            rng: &mut rand::rngs::ThreadRng,
             deck_type: DeckType,
+            rng: &mut rand::rngs::ThreadRng,
         ) {
             self.deck.clear();
 
-            // match_type_init determines the initial game type, typically normal to get which cards are in the deck
-            // the actual match type is determined by the players as soon as they have their cards
             // TODO: implement buffer for cards_per_decktype and deck_per_rule
             self.deck = rules::get_deck_for_decktype(deck_type);
-
-            // shuffle cards
-            self.shuffle_cards(rng);
 
             assert_ne!(self.deck.len(), 0, "Deck is empty");
             assert_eq!(
@@ -544,8 +612,26 @@ pub mod game {
                 "Number of cards is not divisible by number of players",
             );
 
+            self.set_num_rounds(self.deck.len() / players.len());
+
+            // shuffle cards
+            self.shuffle_cards(rng);
+
             // distribute cards to players
             self.distribute_cards(players);
+
+            // set the dealer and beginner
+            self.set_dealer_and_beginner(players);
+        }
+
+        pub fn play_match(
+            &mut self,
+            players: &mut Vec<&mut Player>,
+            deck_type: DeckType,
+            rng: &mut rand::rngs::ThreadRng,
+        ) {
+            // init game, shuffle and distribute cards
+            self.init_match(players, deck_type, rng);
 
             // depending on what cards the players have, determine the match type
             self.match_type = self.determine_match_type(&players.iter().map(|p| &**p).collect());
@@ -563,22 +649,19 @@ pub mod game {
                 player.set_my_team(self.match_type);
             }
 
-            // reserve space for rounds
-            let nrounds = self.deck.len() / players.len();
-            if self.rounds.capacity() < nrounds {
-                // reserve space for rounds
-                self.rounds.reserve(nrounds - self.rounds.capacity());
-            }
-
             // play rounds
             let mut last_round_winner = 0;
-            for _i in 0..nrounds {
+            for _i in 0..self.n_rounds {
                 let mut r = Round::new();
+
                 // after playing the roud, the winner is returned
                 println!("Play round {}", _i);
+
                 last_round_winner = r.play_round(players, last_round_winner).unwrap();
+
                 println!("Round winner: {}", players[last_round_winner].name);
                 println!();
+
                 self.rounds.push(r);
             }
         }
@@ -618,8 +701,45 @@ pub mod game {
             }
         }
 
+        // let the players make a call and decide the match type
         fn determine_match_type(&self, players: &Vec<&Player>) -> rules::MatchType {
-            rules::MatchType::Normal
+            // get index of beginner
+            let b_idx = players
+                .iter()
+                .position(|p| p.beginner)
+                .expect("No beginner found");
+
+            // iterable of indexes of players
+            // into player of iterators in playing order
+            // into iterator over their calls
+            // into maximum call, that is the match_type
+            (0..players.len())
+                .map(|i| players[(b_idx + i) % players.len()])
+                .map(|p| p.make_call().unwrap())
+                .max()
+                .unwrap()
+        }
+
+        fn get_team_score(&self, players: &Vec<&Player>, team: Team) -> Option<u32> {
+            // get the score of the team
+            let score = match team {
+                Team::Contra => players
+                    .iter()
+                    .filter_map(|p| match &p.team {
+                        Team::Contra => Some(p.get_eye_score()),
+                        Team::Re => None,
+                    })
+                    .sum(),
+                Team::Re => players
+                    .iter()
+                    .filter_map(|p| match &p.team {
+                        Team::Re => Some(p.get_eye_score()),
+                        Team::Contra => None,
+                    })
+                    .sum(),
+            };
+
+            Some(score)
         }
     }
 
@@ -649,7 +769,8 @@ pub mod game {
 
         // function to add a player to the game
         pub fn add_player(&mut self, name: String) {
-            let player = Player::new(name);
+            // first player is dealer
+            let player = Player::new(name, self.players.len() == 0);
             self.players.push(player);
         }
 
@@ -663,8 +784,8 @@ pub mod game {
                 // play match
                 m.play_match(
                     &mut self.players.iter_mut().map(|p| p).collect(),
-                    rng,
                     self.deck_type,
+                    rng,
                 );
 
                 self.matches.push(m);
