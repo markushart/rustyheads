@@ -2,7 +2,7 @@ use game::rules;
 
 pub mod game {
     use rand::seq::SliceRandom;
-    use rules::MatchType;
+    use rules::{DeckType, MatchType};
     use rusqlite::{
         types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef},
         Result,
@@ -67,7 +67,6 @@ pub mod game {
             };
             write!(f, "{}", name)
         }
-        
     }
 
     // enum for faces of cards
@@ -191,11 +190,7 @@ pub mod game {
 
     impl fmt::Debug for Card {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                f,
-                "{:?}{:?}",
-                self.suit, self.face
-            )
+            write!(f, "{:?}{:?}", self.suit, self.face)
         }
     }
 
@@ -335,7 +330,7 @@ pub mod game {
             }
         }
 
-        fn set_my_team(&mut self, match_type: rules::MatchType) {
+        fn set_my_team(&mut self, match_type: MatchType) {
             self.team = get_team_for_player(self, match_type);
         }
 
@@ -351,10 +346,26 @@ pub mod game {
             }
         }
 
+        // function to update the player's hand
+        fn update_hand_values(&mut self, deck: &Vec<Card>) {
+            for card in self.hand.iter_mut() {
+                // find card in deck
+                let i = deck
+                    .iter()
+                    .position(|c| c.face == card.face && c.suit == card.suit)
+                    .expect("Card not found in deck");
+                // set rank, trump and eyes of the card
+                card.rank = deck[i].rank;
+                card.trump = deck[i].trump;
+                card.eyes = deck[i].eyes;
+            }
+        }
+
         // if the player wins a round, he collects the cards
         fn collect_won_cards(&mut self, cards: &Vec<Card>) {
             self.won_cards.extend(cards);
         }
+
     }
 
     pub trait Winnable {
@@ -498,6 +509,7 @@ pub mod game {
     pub struct Match {
         rounds: Vec<Round>,
         deck: Vec<Card>,
+        match_type: MatchType,
     }
 
     impl Match {
@@ -505,6 +517,7 @@ pub mod game {
             Match {
                 rounds: Vec::new(),
                 deck: Vec::new(),
+                match_type: MatchType::Normal,
             }
         }
 
@@ -512,13 +525,14 @@ pub mod game {
             &mut self,
             players: &mut Vec<&mut Player>,
             rng: &mut rand::rngs::ThreadRng,
-            match_type_init: MatchType,
+            deck_type: DeckType,
         ) {
             self.deck.clear();
 
             // match_type_init determines the initial game type, typically normal to get which cards are in the deck
             // the actual match type is determined by the players as soon as they have their cards
-            self.deck = rules::get_deck_for_matchtype(match_type_init);
+            // TODO: implement buffer for cards_per_decktype and deck_per_rule
+            self.deck = rules::get_deck_for_decktype(deck_type);
 
             // shuffle cards
             self.shuffle_cards(rng);
@@ -534,14 +548,19 @@ pub mod game {
             self.distribute_cards(players);
 
             // depending on what cards the players have, determine the match type
-            let match_type = self.determine_match_type(&players.iter().map(|p| &**p).collect());
+            self.match_type = self.determine_match_type(&players.iter().map(|p| &**p).collect());
 
             // set the deck of cards
-            self.deck = rules::get_deck_for_matchtype(match_type);
+            self.deck = rules::get_deck_for_matchtype(self.match_type, deck_type);
+
+            // update the values of players hands
+            for player in players.iter_mut() {
+                player.update_hand_values(&self.deck);
+            }
 
             // set the team of the players
             for player in players.iter_mut() {
-                player.set_my_team(match_type);
+                player.set_my_team(self.match_type);
             }
 
             // reserve space for rounds
@@ -610,12 +629,12 @@ pub mod game {
         players: Vec<Player>,
         matches: Vec<Match>,
         n_matches: usize,
-        deck_type: rules::MatchType,
+        deck_type: DeckType,
     }
 
     impl Game {
         // function to start a new game
-        pub fn new(n_matches: usize, deck_type: rules::MatchType) -> Game {
+        pub fn new(n_matches: usize, deck_type: DeckType) -> Game {
             let mut g = Game {
                 players: Vec::new(),
                 matches: Vec::new(),
@@ -675,6 +694,34 @@ pub mod game {
         // filepath for db
         const DB_FILE: &str = "./db/rustyheads.db";
 
+        // enum deck types
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+        pub enum DeckType {
+            Tournament,
+            WithNines,
+        }
+
+        impl FromSql for DeckType {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+                match value.as_i64()? {
+                    1 => Ok(DeckType::Tournament),
+                    2 => Ok(DeckType::WithNines),
+                    other => Err(FromSqlError::Other(
+                        format!("Invalid match type: {}", other).into(),
+                    )),
+                }
+            }
+        }
+
+        impl ToSql for DeckType {
+            fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
+                match self {
+                    DeckType::Tournament => Ok(1.into()),
+                    DeckType::WithNines => Ok(2.into()),
+                }
+            }
+        }
+
         // enum game types
         #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
         pub enum MatchType {
@@ -721,8 +768,47 @@ pub mod game {
             }
         }
 
+        pub fn get_deck_for_decktype(deck_type: DeckType) -> Vec<Card> {
+            // Connect to an SQLite database in memory or a file
+            let conn = Connection::open(DB_FILE).unwrap();
+
+            // sort the cards based on the deck type
+            // query db for cards in normal game
+            let mut stmt = conn
+                .prepare(
+                    "
+                        SELECT c.suit, c.face 
+                          FROM cards AS c
+                          JOIN cards_per_deck AS cpd ON c.id = cpd.card_id
+                         WHERE cpd.deck_type = ?1
+                            ",
+                )
+                .unwrap();
+
+            let card_iter = stmt.query_map(params![deck_type], |row| {
+                Ok(Card::new(row.get(0)?, row.get(1)?, 0, false, 0))
+            });
+
+            let mut cards = Vec::new();
+            for card in card_iter.unwrap() {
+                let card = card.unwrap();
+                cards.push(card);
+                cards.push(card.clone());
+            }
+
+            cards.sort();
+
+            print!("Normal game cards: ");
+            for card in cards.iter() {
+                println!("{} ", card);
+            }
+            println!();
+
+            cards
+        }
+
         // contains the game rules
-        pub fn get_deck_for_matchtype(match_type: MatchType) -> Vec<Card> {
+        pub fn get_deck_for_matchtype(match_type: MatchType, deck_type: DeckType) -> Vec<Card> {
             // Connect to an SQLite database in memory or a file
             let conn = Connection::open(DB_FILE).unwrap();
 
@@ -731,17 +817,19 @@ pub mod game {
             let mut stmt = conn
                 .prepare(
                     "
-                        SELECT cards.suit, cards.face, eyes_per_face.eyes, cards_per_rule.trump, cards_per_rule.rank
-                            FROM cards_per_rule
-                            JOIN cards ON cards.id = cards_per_rule.card_id
-                            JOIN eyes_per_face ON  cards.face                = eyes_per_face.face
-                                               AND cards_per_rule.match_type = eyes_per_face.match_type
-                            WHERE cards_per_rule.match_type = ?1
+                        SELECT c.suit, c.face, ey.eyes, cpr.trump, cpr.rank
+                          FROM cards AS c
+                          JOIN cards_per_deck AS cpd ON c.id = cpd.card_id
+                          JOIN cards_per_rule AS cpr ON cpd.id = cpr.cpd_id
+                          JOIN eyes_per_face AS ey ON c.face = ey.face
+                           AND ey.deck_type = cpd.deck_type
+                         WHERE cpd.deck_type = ?1
+                           AND cpr.match_type = ?2
                             ",
                 )
                 .unwrap();
 
-            let card_iter = stmt.query_map(params![match_type], |row| {
+            let card_iter = stmt.query_map(params![match_type, deck_type], |row| {
                 Ok(Card::new(
                     row.get(0)?,
                     row.get(1)?,
@@ -796,7 +884,7 @@ pub mod game {
 fn main() {
     // create a new game using a random number generator
     let mut rng_shuffle = rand::thread_rng();
-    let mut game = game::Game::new(1, rules::MatchType::Normal);
+    let mut game = game::Game::new(1, rules::DeckType::Tournament);
 
     // add players to the game
     game.add_player("Player 1".to_string());
