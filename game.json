@@ -1,0 +1,189 @@
+{
+    "settings": {
+        "num_players": 4,
+        "face_abbreviations": {
+            "a": "ace",
+            "k": "king",
+            "q": "queen",
+            "j": "jack",
+            "t": "ten",
+            "n": "nine",
+            "e": "eight"
+        },
+        "suit_abbreviations": {
+            "d": "diamonds",
+            "h": "hearts",
+            "s": "spades",
+            "c": "clubs"
+        },
+        "cards": [
+            {
+                "face": "k",
+                "suit": "h",
+                "trump": "false",
+                "eyes": "4",
+                "value": "0"
+            },
+            {
+                "face": "k",
+                "suit": "s",
+                "trump": "false",
+                "eyes": "4",
+                "value": "0"
+            },
+            {
+                "face": "k",
+                "suit": "c",
+                "trump": "false",
+                "eyes": "4",
+                "value": "0"
+            },
+            {
+                "face": "t",
+                "suit": "h",
+                "trump": "false",
+                "eyes": "10",
+                "value": "0"
+            },
+            {
+                "face": "t",
+                "suit": "s",
+                "trump": "false",
+                "eyes": "10",
+                "value": "0"
+            },
+            {
+                "face": "t",
+                "suit": "c",
+                "trump": "false",
+                "eyes": "10",
+                "value": "0"
+            },
+            {
+                "face": "a",
+                "suit": "h",
+                "trump": "false",
+                "eyes": "11",
+                "value": "0"
+            },
+            {
+                "face": "a",
+                "suit": "s",
+                "trump": "false",
+                "eyes": "11",
+                "value": "0"
+            },
+            {
+                "face": "a",
+                "suit": "c",
+                "trump": "false",
+                "eyes": "11",
+                "value": "0"
+            },
+            {
+                "face": "t",
+                "suit": "d",
+                "trump": "true",
+                "eyes": "10",
+                "value": "0"
+            },
+            {
+                "face": "a",
+                "suit": "d",
+                "trump": "true",
+                "eyes": "11",
+                "value": "10"
+            },
+            {
+                "face": "j",
+                "suit": "d",
+                "trump": "true",
+                "eyes": "2",
+                "value": "0"
+            },
+            {
+                "face": "j",
+                "suit": "h",
+                "trump": "true",
+                "eyes": "2",
+                "value": "0"
+            },
+            {
+                "face": "j",
+                "suit": "s",
+                "trump": "true",
+                "eyes": "2",
+                "value": "0"
+            },
+            {
+                "face": "j",
+                "suit": "c",
+                "trump": "true",
+                "eyes": "2",
+                "value": "0"
+            },
+            {
+                "face": "q",
+                "suit": "d",
+                "trump": "true",
+                "eyes": "3",
+                "value": "0"
+            },
+            {
+                "face": "q",
+                "suit": "h",
+                "trump": "true",
+                "eyes": "3",
+                "value": "0"
+            },
+            {
+                "face": "q",
+                "suit": "s",
+                "trump": "true",
+                "eyes": "3",
+                "value": "0"
+            },
+            {
+                "face": "q",
+                "suit": "c",
+                "trump": "true",
+                "eyes": "3",
+                "value": "0"
+            },
+            {
+                "face": "k",
+                "suit": "d",
+                "trump": "true",
+                "eyes": "4",
+                "value": "0"
+            }
+        ],
+        "rules": []
+    },
+    "players": [
+        {
+            "name": "player0",
+            "hand": [],
+            "cards_won": [],
+            "team": "contra"
+        },
+        {
+            "name": "player1",
+            "hand": [],
+            "cards_won": [],
+            "team": "contra"
+        },
+        {
+            "name": "player2",
+            "hand": [],
+            "cards_won": [],
+            "team": "re"
+        },
+        {
+            "name": "player3",
+            "hand": [],
+            "cards_won": [],
+            "team": "re"
+        }
+    ]
+}
