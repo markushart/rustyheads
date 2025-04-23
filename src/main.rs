@@ -383,45 +383,17 @@ pub mod game {
 
     impl ComputerPlayer {
         // create a new ComputerPlayer
-        fn new(name: String, dealer: bool) -> Player {
-            Player {
-                name,
-                hand: Vec::new(),
-                won_cards: Vec::new(),
-                team: Team::Contra,
-                dealer,
-                beginner: false,
+        fn new(name: String, dealer: bool) -> ComputerPlayer {
+            ComputerPlayer {
+                data: Player {
+                    name,
+                    hand: Vec::new(),
+                    won_cards: Vec::new(),
+                    team: Team::Contra,
+                    dealer,
+                    beginner: false,
+                },
             }
-        }
-    }
-
-    impl PlayerBehav for Player {
-        fn data(&self) -> &Player {
-            self
-        }
-
-        fn data_mut(&mut self) -> &mut Player {
-            &mut *self
-        }
-
-        // function to choose a card from the player's hand
-        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
-            // for simplicity, we just return the first card in the hand
-            // in a real game, this would be more complex
-            if self.get_num_cards() == 0 {
-                return None;
-            } else {
-                println!("{} hand: {:?}", self.name, possible_cards);
-                println!("{} plays: {}", self.name, possible_cards[0]);
-                Some(possible_cards[0])
-            }
-        }
-
-        // function to make a call
-        fn make_call(&self) -> Option<MatchType> {
-            // for simplicity, we just return a random call
-            // in a real game, this would be more complex
-            Some(MatchType::Normal)
         }
     }
 
@@ -457,14 +429,16 @@ pub mod game {
 
     impl HumanPlayer {
         // create a new ComputerPlayer
-        fn new(name: String, dealer: bool) -> Player {
-            Player {
-                name,
-                hand: Vec::new(),
-                won_cards: Vec::new(),
-                team: Team::Contra,
-                dealer,
-                beginner: false,
+        fn new(name: String, dealer: bool) -> HumanPlayer {
+            HumanPlayer {
+                data: Player {
+                    name,
+                    hand: Vec::new(),
+                    won_cards: Vec::new(),
+                    team: Team::Contra,
+                    dealer,
+                    beginner: false,
+                },
             }
         }
     }
@@ -583,7 +557,7 @@ pub mod game {
 
             // each player plays one card
             for _i in 0..players.len() {
-                let card = players[self.current_player].data_mut().play_card(self);
+                let card = players[self.current_player].play_card(self);
 
                 self.current_player = (self.current_player + 1) % players.len();
 
@@ -602,9 +576,7 @@ pub mod game {
 
             self.current_player = winner;
 
-            players[winner]
-                .data_mut()
-                .collect_won_cards(&self.played_cards);
+            players[winner].collect_won_cards(&self.played_cards);
             self.played_cards.clear();
 
             Some(winner)
@@ -834,8 +806,7 @@ pub mod game {
             // into iterator over their calls
             // into maximum call, that is the match_type
             (0..players.len())
-                .map(|i| players[(b_idx + i) % players.len()].data())
-                .map(|p| p.make_call().unwrap())
+                .map(|i| players[(b_idx + i) % players.len()].make_call().unwrap())
                 .max()
                 .unwrap()
         }
@@ -896,7 +867,9 @@ pub mod game {
             // };
             // self.players.push(Box::new(player));
             match player_type {
-                PlayerType::Computer => self.players.push(Box::new(ComputerPlayer::new(name, dealer))),
+                PlayerType::Computer => self
+                    .players
+                    .push(Box::new(ComputerPlayer::new(name, dealer))),
                 PlayerType::Human => self.players.push(Box::new(HumanPlayer::new(name, dealer))),
             };
         }
