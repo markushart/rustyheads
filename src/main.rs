@@ -493,6 +493,9 @@ pub mod game {
         winner: usize,
     }
 
+    type RoundBox = Box<Round>;
+    type RoundBoxes = Vec<RoundBox>;
+
     impl Winnable for Round {
         type Winner = usize;
         type CheckType = Card;
@@ -616,11 +619,14 @@ pub mod game {
     // at the beginning of the match, cards are dealt to players
     // then the players give calls, depending on the call, the trump cards are set
     pub struct Match {
-        rounds: Vec<Round>,
+        rounds: RoundBoxes,
         deck: Vec<Card>,
         match_type: MatchType, // type of match
         n_rounds: usize,       // number of rounds in the match
     }
+
+    type MatchBox = Box<Match>;
+    type MatchBoxes = Vec<MatchBox>;
 
     impl Winnable for Match {
         type Winner = Team;
@@ -760,7 +766,7 @@ pub mod game {
 
                 last_round_winner = round.winner;
 
-                self.rounds.push(round);
+                self.rounds.push(RoundBox::new(round));
 
                 println!("Round winner: {}", players[last_round_winner].data().name);
                 println!();
@@ -847,10 +853,13 @@ pub mod game {
     // the overall game consists of multiple matches
     pub struct Game {
         players: DynPlayers,
-        matches: Vec<Match>,
+        matches: MatchBoxes,
         n_matches: usize,
         deck_type: DeckType,
     }
+
+    type GameBox = Box<Game>;
+    type GameBoxes = Vec<GameBox>;
 
     impl Game {
         // function to start a new game
@@ -870,17 +879,13 @@ pub mod game {
         // function to add a player to the game
         pub fn add_player(&mut self, name: String, player_type: PlayerType) {
             let dealer = self.players.len() == 0;
-            // let player = match player_type {
-            //     PlayerType::Computer => ComputerPlayer::new(name, dealer),
-            //     PlayerType::Human => HumanPlayer::new(name, dealer),
-            // };
-            // self.players.push(Box::new(player));
-            match player_type {
-                PlayerType::Computer => self
-                    .players
-                    .push(Box::new(ComputerPlayer::new(name, dealer))),
-                PlayerType::Human => self.players.push(Box::new(HumanPlayer::new(name, dealer))),
+
+            let player: DynPlayer = match player_type {
+                PlayerType::Computer => Box::new(ComputerPlayer::new(name, dealer)),
+                PlayerType::Human => Box::new(HumanPlayer::new(name, dealer)),
             };
+
+            self.players.push(player);
         }
 
         pub fn play_game(&mut self, n_matches: usize, rng: &mut rand::rngs::ThreadRng) {
@@ -898,7 +903,7 @@ pub mod game {
                     rng,
                 );
 
-                self.matches.push(m);
+                self.matches.push(MatchBox::new(m));
             }
         }
 
@@ -1113,14 +1118,16 @@ pub mod game {
 
     mod simulation {
 
-        use crate::game::{Card, RankType, Match, Round};
+        use crate::game::{Card, Match, RankType, Round};
+
+        use super::RoundBoxes;
 
         // implement a tree structure to simulate a series of cards played
         #[derive(Clone)]
         struct CardNode {
             rank: RankType,
             depth: u8,
-            next: Vec<usize>
+            next: Vec<usize>,
         }
 
         pub fn simulate(current_match: &Match, current_round: &Round) {
@@ -1135,10 +1142,41 @@ pub mod game {
                 depth: 0,
                 next: Vec::new(),
             }];
+            let mut depth = 0;
 
-            // let mut rounds: Vec<&Round> = 
+            for r in &current_match.rounds {
+                for c in &r.played_cards {
+                    let idx = nodes.len() - 1;
+                    nodes.last_mut().unwrap().next.push(idx);
 
+                    nodes.push(CardNode {
+                        rank: c.rank,
+                        depth,
+                        next: Vec::new(),
+                    });
 
+                    depth += 1;
+                }
+            }
+
+            for c in &current_round.played_cards {
+                let idx = nodes.len() - 1;
+                nodes.last_mut().unwrap().next.push(idx);
+
+                nodes.push(CardNode {
+                    rank: c.rank,
+                    depth,
+                    next: Vec::new(),
+                });
+
+                depth += 1;
+            }
+
+            let mut node = nodes.first().unwrap();
+            while node.next.len() > 0 {
+                print!("Node: {} ", node.rank);
+                node = &nodes[node.next[0]];
+            }
         }
     }
 }
@@ -1155,4 +1193,5 @@ fn main() {
     game.add_player("Player 4".to_string(), game::PlayerType::Computer);
 
     game.play_game(1, &mut rng_shuffle);
+
 }
