@@ -178,6 +178,8 @@ pub mod game {
         OtherWins,
     }
 
+    type RankType = u8;
+
     // struct for a card
     #[derive(Clone, Copy)]
     pub struct Card {
@@ -185,7 +187,7 @@ pub mod game {
         face: Face,
         eyes: u8,
         trump: bool,
-        rank: u32,
+        rank: RankType,
     }
 
     impl fmt::Debug for Card {
@@ -201,7 +203,7 @@ pub mod game {
     }
 
     impl Card {
-        fn new(suit: Suit, face: Face, eyes: u8, trump: bool, rank: u32) -> Card {
+        fn new(suit: Suit, face: Face, eyes: u8, trump: bool, rank: RankType) -> Card {
             Card {
                 suit,
                 face,
@@ -330,7 +332,7 @@ pub mod game {
         fn data_mut(&mut self) -> &mut Player;
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card>;
+        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card>;
 
         // function to make a call
         fn make_call(&self) -> Option<MatchType>;
@@ -344,10 +346,10 @@ pub mod game {
         }
 
         // function to play a card from the player's hand
-        fn play_card(&mut self, round: &Round) -> Card {
-            let possible_cards = round.filter_possible_cards(&self.data().hand);
+        fn play_card(&mut self, current_round: &Round, current_match: &Match) -> Card {
+            let possible_cards = current_round.filter_possible_cards(&self.data().hand);
 
-            let card = self.choose_card(round, &possible_cards).unwrap();
+            let card = self.choose_card(current_match, &possible_cards).unwrap();
 
             match self.data().hand.iter().position(|c| c == &card) {
                 Some(i) => self.data_mut().hand.swap_remove(i),
@@ -407,14 +409,14 @@ pub mod game {
         }
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
+        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
             if self.get_num_cards() == 0 {
                 return None;
             } else {
-                // println!("{} hand: {:?}", self.name, possible_cards);
-                // println!("{} plays: {}", self.name, possible_cards[0]);
+                println!("{} hand: {:?}", self.data().name, possible_cards);
+                println!("{} plays: {}", self.data().name, possible_cards[0]);
                 Some(possible_cards[0])
             }
         }
@@ -453,7 +455,7 @@ pub mod game {
         }
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
+        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
             if self.get_num_cards() == 0 {
@@ -483,10 +485,12 @@ pub mod game {
     // struct for a game round
     // in a single rount each player plays one card from his hand
     // there are maximum 5 players
+    #[derive(Clone)]
     pub struct Round {
         played_cards: Vec<Card>,
         current_player: usize,
         starting_player: usize,
+        winner: usize,
     }
 
     impl Winnable for Round {
@@ -532,6 +536,7 @@ pub mod game {
                 played_cards: Vec::new(),
                 current_player: 0,
                 starting_player: 0,
+                winner: 0,
             }
         }
 
@@ -550,6 +555,7 @@ pub mod game {
         // function to play a round
         fn play_round(
             &mut self,
+            current_match: &mut Match,
             players: &mut DynPlayers,
             last_rounds_winner: usize,
         ) -> Option<usize> {
@@ -557,14 +563,14 @@ pub mod game {
 
             // each player plays one card
             for _i in 0..players.len() {
-                let card = players[self.current_player].play_card(self);
+                let card = players[self.current_player].play_card(&self, current_match);
 
                 self.current_player = (self.current_player + 1) % players.len();
 
                 self.played_cards.push(card)
             }
 
-            let winner = self
+            self.winner = self
                 .determine_winner(
                     &self
                         .played_cards
@@ -574,12 +580,10 @@ pub mod game {
                 )
                 .unwrap();
 
-            self.current_player = winner;
-
-            players[winner].collect_won_cards(&self.played_cards);
+            players[self.winner].collect_won_cards(&self.played_cards);
             self.played_cards.clear();
 
-            Some(winner)
+            Some(self.winner)
         }
 
         fn filter_possible_cards(&self, hand: &Vec<Card>) -> Vec<Card> {
@@ -652,6 +656,11 @@ pub mod game {
             }
         }
 
+        // function to get the current rounds
+        fn current_round(&self) -> usize {
+            self.rounds.len()
+        }
+
         fn set_num_rounds(&mut self, n_rounds: usize) {
             self.n_rounds = n_rounds;
             // reserve space for rounds
@@ -691,6 +700,7 @@ pub mod game {
             rng: &mut rand::rngs::ThreadRng,
         ) {
             self.deck.clear();
+            self.rounds.clear();
 
             // TODO: implement buffer for cards_per_decktype and deck_per_rule
             self.deck = rules::get_deck_for_decktype(deck_type);
@@ -731,30 +741,29 @@ pub mod game {
             // set the deck of cards
             self.deck = rules::get_deck_for_matchtype(self.match_type, deck_type);
 
-            // update the values of players hands
             for player in players.iter_mut() {
+                // update the values of players hands
                 player.update_hand_values(&self.deck);
-            }
-
-            // set the team of the players
-            for player in players.iter_mut() {
+                // set the team of the players
                 player.set_my_team(self.match_type);
             }
 
             // play rounds
             let mut last_round_winner = 0;
-            for _i in 0..self.n_rounds {
-                let mut r = Round::new();
 
-                // after playing the roud, the winner is returned
-                println!("Play round {}", _i);
+            while self.current_round() < self.n_rounds {
+                // after playing the round, the winner is returned
+                println!("Play round {}", self.current_round() + 1);
 
-                last_round_winner = r.play_round(players, last_round_winner).unwrap();
+                let mut round = Round::new();
+                round.play_round(self, players, last_round_winner);
+
+                last_round_winner = round.winner;
+
+                self.rounds.push(round);
 
                 println!("Round winner: {}", players[last_round_winner].data().name);
                 println!();
-
-                self.rounds.push(r);
             }
         }
 
@@ -1101,6 +1110,37 @@ pub mod game {
             rules::MatchType::Fleshless => Team::Contra,
         }
     }
+
+    mod simulation {
+
+        use crate::game::{Card, RankType, Match, Round};
+
+        // implement a tree structure to simulate a series of cards played
+        #[derive(Clone)]
+        struct CardNode {
+            rank: RankType,
+            depth: u8,
+            next: Vec<usize>
+        }
+
+        pub fn simulate(current_match: &Match, current_round: &Round) {
+            // create a LUT for cards
+            let mut card_lut = current_match.deck.clone();
+            card_lut.sort();
+            card_lut.dedup();
+
+            // create a tree of cards played till now
+            let mut nodes = vec![CardNode {
+                rank: 0,
+                depth: 0,
+                next: Vec::new(),
+            }];
+
+            // let mut rounds: Vec<&Round> = 
+
+
+        }
+    }
 }
 
 fn main() {
@@ -1109,10 +1149,10 @@ fn main() {
     let mut game = game::Game::new(1, rules::DeckType::Tournament);
 
     // add players to the game
-    game.add_player("Player 1".to_string(), crate::game::PlayerType::Computer);
-    game.add_player("Player 2".to_string(), crate::game::PlayerType::Computer);
-    game.add_player("Player 3".to_string(), crate::game::PlayerType::Computer);
-    game.add_player("Player 4".to_string(), crate::game::PlayerType::Computer);
+    game.add_player("Player 1".to_string(), game::PlayerType::Computer);
+    game.add_player("Player 2".to_string(), game::PlayerType::Computer);
+    game.add_player("Player 3".to_string(), game::PlayerType::Computer);
+    game.add_player("Player 4".to_string(), game::PlayerType::Computer);
 
     game.play_game(1, &mut rng_shuffle);
 }
