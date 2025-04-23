@@ -298,6 +298,11 @@ pub mod game {
         Re,
     }
 
+    pub enum PlayerType {
+        Human,
+        Computer,
+    }
+
     // struct for a player
     pub struct Player {
         name: String,
@@ -308,51 +313,51 @@ pub mod game {
         beginner: bool,
     }
 
-    impl Player {
-        // create a new player
-        fn new(name: String, dealer: bool) -> Player {
-            Player {
-                name,
-                hand: Vec::new(),
-                won_cards: Vec::new(),
-                team: Team::Contra,
-                dealer,
-                beginner: false,
-            }
-        }
+    pub struct HumanPlayer {
+        data: Player,
+    }
+
+    pub struct ComputerPlayer {
+        data: Player,
+    }
+
+    type DynPlayer = Box<dyn PlayerBehav>;
+    type DynPlayers = Vec<DynPlayer>;
+
+    pub trait PlayerBehav {
+        // get data and mutable data
+        fn data(&self) -> &Player;
+        fn data_mut(&mut self) -> &mut Player;
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
-            // for simplicity, we just return the first card in the hand
-            // in a real game, this would be more complex
-            if self.hand.len() == 0 {
-                return None;
-            } else {
-                println!("{} hand: {:?}", self.name, possible_cards);
-                println!("{} plays: {}", self.name, possible_cards[0]);
-                Some(possible_cards[0])
-            }
-        }
+        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card>;
+
+        // function to make a call
+        fn make_call(&self) -> Option<MatchType>;
 
         fn set_my_team(&mut self, match_type: MatchType) {
-            self.team = get_team_for_player(self, match_type);
+            self.data_mut().team = get_team_for_player(self.data(), match_type);
+        }
+
+        fn get_num_cards(&self) -> usize {
+            self.data().hand.len()
         }
 
         // function to play a card from the player's hand
         fn play_card(&mut self, round: &Round) -> Card {
-            let possible_cards = round.filter_possible_cards(&self.hand);
+            let possible_cards = round.filter_possible_cards(&self.data().hand);
 
             let card = self.choose_card(round, &possible_cards).unwrap();
 
-            match self.hand.iter().position(|c| c == &card) {
-                Some(i) => self.hand.swap_remove(i),
+            match self.data().hand.iter().position(|c| c == &card) {
+                Some(i) => self.data_mut().hand.swap_remove(i),
                 None => panic!("Card not found in hand"),
             }
         }
 
         // function to update the player's hand
         fn update_hand_values(&mut self, deck: &Vec<Card>) {
-            for card in self.hand.iter_mut() {
+            for card in self.data_mut().hand.iter_mut() {
                 // find card in deck
                 let i = deck
                     .iter()
@@ -365,21 +370,132 @@ pub mod game {
             }
         }
 
+        // if the player wins a round, he collects the cards
+        fn collect_won_cards(&mut self, cards: &Vec<Card>) {
+            self.data_mut().won_cards.extend(cards);
+        }
+
+        // sum the eyes of the won cards to determine the eye_score
+        fn get_eye_score(&self) -> u32 {
+            self.data().won_cards.iter().map(|c| c.eyes as u32).sum()
+        }
+    }
+
+    impl ComputerPlayer {
+        // create a new ComputerPlayer
+        fn new(name: String, dealer: bool) -> Player {
+            Player {
+                name,
+                hand: Vec::new(),
+                won_cards: Vec::new(),
+                team: Team::Contra,
+                dealer,
+                beginner: false,
+            }
+        }
+    }
+
+    impl PlayerBehav for Player {
+        fn data(&self) -> &Player {
+            self
+        }
+
+        fn data_mut(&mut self) -> &mut Player {
+            &mut *self
+        }
+
+        // function to choose a card from the player's hand
+        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
+            // for simplicity, we just return the first card in the hand
+            // in a real game, this would be more complex
+            if self.get_num_cards() == 0 {
+                return None;
+            } else {
+                println!("{} hand: {:?}", self.name, possible_cards);
+                println!("{} plays: {}", self.name, possible_cards[0]);
+                Some(possible_cards[0])
+            }
+        }
+
         // function to make a call
         fn make_call(&self) -> Option<MatchType> {
             // for simplicity, we just return a random call
             // in a real game, this would be more complex
             Some(MatchType::Normal)
         }
+    }
 
-        // if the player wins a round, he collects the cards
-        fn collect_won_cards(&mut self, cards: &Vec<Card>) {
-            self.won_cards.extend(cards);
+    impl PlayerBehav for ComputerPlayer {
+        fn data(&self) -> &Player {
+            &self.data
         }
 
-        // sum the eyes of the won cards to determine the eye_score
-        pub fn get_eye_score(&self) -> u32 {
-            self.won_cards.iter().map(|c| c.eyes as u32).sum()
+        fn data_mut(&mut self) -> &mut Player {
+            &mut self.data
+        }
+
+        // function to choose a card from the player's hand
+        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
+            // for simplicity, we just return the first card in the hand
+            // in a real game, this would be more complex
+            if self.get_num_cards() == 0 {
+                return None;
+            } else {
+                // println!("{} hand: {:?}", self.name, possible_cards);
+                // println!("{} plays: {}", self.name, possible_cards[0]);
+                Some(possible_cards[0])
+            }
+        }
+
+        // function to make a call
+        fn make_call(&self) -> Option<MatchType> {
+            // for simplicity, we just return a random call
+            // in a real game, this would be more complex
+            Some(MatchType::Normal)
+        }
+    }
+
+    impl HumanPlayer {
+        // create a new ComputerPlayer
+        fn new(name: String, dealer: bool) -> Player {
+            Player {
+                name,
+                hand: Vec::new(),
+                won_cards: Vec::new(),
+                team: Team::Contra,
+                dealer,
+                beginner: false,
+            }
+        }
+    }
+
+    impl PlayerBehav for HumanPlayer {
+        fn data(&self) -> &Player {
+            &self.data
+        }
+
+        fn data_mut(&mut self) -> &mut Player {
+            &mut self.data
+        }
+
+        // function to choose a card from the player's hand
+        fn choose_card(&self, round: &Round, possible_cards: &Vec<Card>) -> Option<Card> {
+            // for simplicity, we just return the first card in the hand
+            // in a real game, this would be more complex
+            if self.get_num_cards() == 0 {
+                return None;
+            } else {
+                // println!("{} hand: {:?}", self.name, possible_cards);
+                // println!("{} plays: {}", self.name, possible_cards[0]);
+                Some(possible_cards[0])
+            }
+        }
+
+        // function to make a call
+        fn make_call(&self) -> Option<MatchType> {
+            // for simplicity, we just return a random call
+            // in a real game, this would be more complex
+            Some(MatchType::Normal)
         }
     }
 
@@ -457,17 +573,17 @@ pub mod game {
             self.current_player = starting_player;
         }
 
-        // function to play round
+        // function to play a round
         fn play_round(
             &mut self,
-            players: &mut Vec<&mut Player>,
+            players: &mut DynPlayers,
             last_rounds_winner: usize,
         ) -> Option<usize> {
             self.init_round(players.len(), last_rounds_winner);
 
             // each player plays one card
             for _i in 0..players.len() {
-                let card = players[self.current_player].play_card(self);
+                let card = players[self.current_player].data_mut().play_card(self);
 
                 self.current_player = (self.current_player + 1) % players.len();
 
@@ -486,7 +602,9 @@ pub mod game {
 
             self.current_player = winner;
 
-            players[winner].collect_won_cards(&self.played_cards);
+            players[winner]
+                .data_mut()
+                .collect_won_cards(&self.played_cards);
             self.played_cards.clear();
 
             Some(winner)
@@ -571,11 +689,11 @@ pub mod game {
             }
         }
 
-        fn set_dealer_and_beginner(&mut self, players: &mut Vec<&mut Player>) {
+        fn set_dealer_and_beginner(&mut self, players: &mut DynPlayers) {
             assert!(players.len() > 0, "No players in the game");
 
             // find index of dealer and beginner
-            let d_idx_old = match players.iter().position(|p| p.dealer) {
+            let d_idx_old = match players.iter().position(|p| p.data().dealer) {
                 Some(i) => i,
                 None => players.len() - 1,
             };
@@ -588,15 +706,15 @@ pub mod game {
             let b_idx_new = (b_idx_old + 1) % players.len();
 
             // set the new dealer and beginner
-            players[d_idx_old].dealer = false;
-            players[d_idx_new].dealer = true;
-            players[b_idx_old].beginner = false;
-            players[b_idx_new].beginner = true;
+            players[d_idx_old].data_mut().dealer = false;
+            players[d_idx_new].data_mut().dealer = true;
+            players[b_idx_old].data_mut().beginner = false;
+            players[b_idx_new].data_mut().beginner = true;
         }
 
         fn init_match(
             &mut self,
-            players: &mut Vec<&mut Player>,
+            players: &mut DynPlayers,
             deck_type: DeckType,
             rng: &mut rand::rngs::ThreadRng,
         ) {
@@ -626,7 +744,7 @@ pub mod game {
 
         pub fn play_match(
             &mut self,
-            players: &mut Vec<&mut Player>,
+            players: &mut DynPlayers,
             deck_type: DeckType,
             rng: &mut rand::rngs::ThreadRng,
         ) {
@@ -634,7 +752,9 @@ pub mod game {
             self.init_match(players, deck_type, rng);
 
             // depending on what cards the players have, determine the match type
-            self.match_type = self.determine_match_type(&players.iter().map(|p| &**p).collect());
+
+            // self.match_type = self.determine_match_type(&players.iter().map(|p| &**p).collect());
+            self.match_type = self.determine_match_type(players);
 
             // set the deck of cards
             self.deck = rules::get_deck_for_matchtype(self.match_type, deck_type);
@@ -659,7 +779,7 @@ pub mod game {
 
                 last_round_winner = r.play_round(players, last_round_winner).unwrap();
 
-                println!("Round winner: {}", players[last_round_winner].name);
+                println!("Round winner: {}", players[last_round_winner].data().name);
                 println!();
 
                 self.rounds.push(r);
@@ -671,7 +791,7 @@ pub mod game {
             self.deck.shuffle(rng);
         }
 
-        fn distribute_cards(&mut self, players: &mut Vec<&mut Player>) {
+        fn distribute_cards(&mut self, players: &mut DynPlayers) {
             // distribute cards to players
             let nplayers = players.len();
             let ncards = self.deck.len();
@@ -693,7 +813,7 @@ pub mod game {
                     None => break,
                     Some(card) => {
                         // add the card to the player's hand
-                        players[i].hand.push(card);
+                        players[i].data_mut().hand.push(card);
                         // increment player index
                         i = (i + 1) % nplayers;
                     }
@@ -702,11 +822,11 @@ pub mod game {
         }
 
         // let the players make a call and decide the match type
-        fn determine_match_type(&self, players: &Vec<&Player>) -> rules::MatchType {
+        fn determine_match_type(&self, players: &DynPlayers) -> rules::MatchType {
             // get index of beginner
             let b_idx = players
                 .iter()
-                .position(|p| p.beginner)
+                .position(|p| p.data().beginner)
                 .expect("No beginner found");
 
             // iterable of indexes of players
@@ -714,25 +834,25 @@ pub mod game {
             // into iterator over their calls
             // into maximum call, that is the match_type
             (0..players.len())
-                .map(|i| players[(b_idx + i) % players.len()])
+                .map(|i| players[(b_idx + i) % players.len()].data())
                 .map(|p| p.make_call().unwrap())
                 .max()
                 .unwrap()
         }
 
-        fn get_team_score(&self, players: &Vec<&Player>, team: Team) -> Option<u32> {
+        fn get_team_score(&self, players: &DynPlayers, team: Team) -> Option<u32> {
             // get the score of the team
             let score = match team {
                 Team::Contra => players
                     .iter()
-                    .filter_map(|p| match &p.team {
+                    .filter_map(|p| match &p.data().team {
                         Team::Contra => Some(p.get_eye_score()),
                         Team::Re => None,
                     })
                     .sum(),
                 Team::Re => players
                     .iter()
-                    .filter_map(|p| match &p.team {
+                    .filter_map(|p| match &p.data().team {
                         Team::Re => Some(p.get_eye_score()),
                         Team::Contra => None,
                     })
@@ -746,7 +866,7 @@ pub mod game {
     // struct representing the game
     // the overall game consists of multiple matches
     pub struct Game {
-        players: Vec<Player>,
+        players: DynPlayers,
         matches: Vec<Match>,
         n_matches: usize,
         deck_type: DeckType,
@@ -768,10 +888,17 @@ pub mod game {
         }
 
         // function to add a player to the game
-        pub fn add_player(&mut self, name: String) {
-            // first player is dealer
-            let player = Player::new(name, self.players.len() == 0);
-            self.players.push(player);
+        pub fn add_player(&mut self, name: String, player_type: PlayerType) {
+            let dealer = self.players.len() == 0;
+            // let player = match player_type {
+            //     PlayerType::Computer => ComputerPlayer::new(name, dealer),
+            //     PlayerType::Human => HumanPlayer::new(name, dealer),
+            // };
+            // self.players.push(Box::new(player));
+            match player_type {
+                PlayerType::Computer => self.players.push(Box::new(ComputerPlayer::new(name, dealer))),
+                PlayerType::Human => self.players.push(Box::new(HumanPlayer::new(name, dealer))),
+            };
         }
 
         pub fn play_game(&mut self, n_matches: usize, rng: &mut rand::rngs::ThreadRng) {
@@ -783,7 +910,8 @@ pub mod game {
 
                 // play match
                 m.play_match(
-                    &mut self.players.iter_mut().map(|p| p).collect(),
+                    // &mut self.players.iter_mut().map(|p| p).collect(),
+                    &mut self.players,
                     self.deck_type,
                     rng,
                 );
@@ -1008,10 +1136,10 @@ fn main() {
     let mut game = game::Game::new(1, rules::DeckType::Tournament);
 
     // add players to the game
-    game.add_player("Player 1".to_string());
-    game.add_player("Player 2".to_string());
-    game.add_player("Player 3".to_string());
-    game.add_player("Player 4".to_string());
+    game.add_player("Player 1".to_string(), crate::game::PlayerType::Computer);
+    game.add_player("Player 2".to_string(), crate::game::PlayerType::Computer);
+    game.add_player("Player 3".to_string(), crate::game::PlayerType::Computer);
+    game.add_player("Player 4".to_string(), crate::game::PlayerType::Computer);
 
     game.play_game(1, &mut rng_shuffle);
 }
