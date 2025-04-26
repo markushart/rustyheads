@@ -7,7 +7,7 @@ pub mod game {
         types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef},
         Result,
     };
-    use std::fmt;
+    use std::{collections::HashMap, fmt};
     // This module contains the game logic and rules
     // It includes the definitions of cards, players, rounds, and matches
 
@@ -856,6 +856,8 @@ pub mod game {
         matches: MatchBoxes,
         n_matches: usize,
         deck_type: DeckType,
+        // buffers the deck of a specific match to reduce DB querries per Game
+        deck_buff: HashMap<(DeckType, MatchType), Vec<Card>>,
     }
 
     type GameBox = Box<Game>;
@@ -869,6 +871,7 @@ pub mod game {
                 matches: Vec::new(),
                 n_matches: 0,
                 deck_type,
+                deck_buff: HashMap::new(),
             };
 
             g.set_num_matches(n_matches);
@@ -1193,5 +1196,4 @@ fn main() {
     game.add_player("Player 4".to_string(), game::PlayerType::Computer);
 
     game.play_game(1, &mut rng_shuffle);
-
 }
