@@ -7,12 +7,12 @@ pub mod game {
         types::{FromSql, FromSqlError, ToSql, ToSqlOutput, ValueRef},
         Result,
     };
-    use std::{collections::HashMap, fmt};
+    use std::{collections::HashMap, fmt, hash::Hash};
     // This module contains the game logic and rules
     // It includes the definitions of cards, players, rounds, and matches
 
     // enum for suits of cards
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
     pub enum Suit {
         Hearts,
         Diamonds,
@@ -70,7 +70,7 @@ pub mod game {
     }
 
     // enum for faces of cards
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
     pub enum Face {
         Two,
         Three,
@@ -179,13 +179,14 @@ pub mod game {
     }
 
     type RankType = u8;
+    type EyeType = u8;
 
     // struct for a card
     #[derive(Clone, Copy)]
     pub struct Card {
         suit: Suit,
         face: Face,
-        eyes: u8,
+        eyes: EyeType,
         trump: bool,
         rank: RankType,
     }
@@ -703,13 +704,13 @@ pub mod game {
             &mut self,
             players: &mut DynPlayers,
             deck_type: DeckType,
+            deck_buff: &mut DeckBuff,
             rng: &mut rand::rngs::ThreadRng,
         ) {
             self.deck.clear();
             self.rounds.clear();
 
-            // TODO: implement buffer for cards_per_decktype and deck_per_rule
-            self.deck = rules::get_deck_for_decktype(deck_type);
+            self.deck = deck_buff.get_deck(deck_type).unwrap();
 
             assert_ne!(self.deck.len(), 0, "Deck is empty");
             assert_eq!(
@@ -734,10 +735,11 @@ pub mod game {
             &mut self,
             players: &mut DynPlayers,
             deck_type: DeckType,
+            deck_buff: &mut DeckBuff,
             rng: &mut rand::rngs::ThreadRng,
         ) {
             // init game, shuffle and distribute cards
-            self.init_match(players, deck_type, rng);
+            self.init_match(players, deck_type, deck_buff, rng);
 
             // depending on what cards the players have, determine the match type
 
@@ -745,7 +747,9 @@ pub mod game {
             self.match_type = self.determine_match_type(players);
 
             // set the deck of cards
-            self.deck = rules::get_deck_for_matchtype(self.match_type, deck_type);
+            self.deck = deck_buff
+                .get_card_values(&self.deck, self.match_type, deck_type)
+                .unwrap();
 
             for player in players.iter_mut() {
                 // update the values of players hands
@@ -856,8 +860,119 @@ pub mod game {
         matches: MatchBoxes,
         n_matches: usize,
         deck_type: DeckType,
-        // buffers the deck of a specific match to reduce DB querries per Game
-        deck_buff: HashMap<(DeckType, MatchType), Vec<Card>>,
+        deck_buff: Box<DeckBuff>,
+    }
+
+    #[derive(Clone, Copy, Hash, PartialEq, Eq)]
+    pub struct CardValueKey {
+        match_type: MatchType,
+        suit: Suit,
+        face: Face,
+    }
+
+    #[derive(Clone, Copy, Hash, PartialEq, Eq)]
+    pub struct CardValue {
+        eyes: EyeType,
+        trump: bool,
+        rank: RankType,
+    }
+
+    // buffers the deck of a specific match to reduce DB querries per Game
+    pub struct DeckBuff {
+        deck_map: HashMap<DeckType, Vec<(Suit, Face)>>,
+        card_value_map: HashMap<CardValueKey, CardValue>,
+    }
+
+    impl DeckBuff {
+        fn new() -> DeckBuff {
+            DeckBuff {
+                deck_map: HashMap::new(),
+                card_value_map: HashMap::new(),
+            }
+        }
+
+        fn get_deck(&mut self, deck_type: DeckType) -> Option<Vec<Card>> {
+            match self.deck_map.get(&deck_type) {
+                Some(deck) => Some(
+                    deck.iter()
+                        .map(|(s, f)| Card::new(*s, *f, 0, false, 0))
+                        .collect(),
+                ),
+                None => {
+                    let d = rules::get_deck_for_decktype(deck_type);
+                    self.deck_map.insert(
+                        deck_type,
+                        d.clone()
+                            .unwrap()
+                            .iter()
+                            .map(|c| (c.suit, c.face))
+                            .collect(),
+                    );
+                    d
+                }
+            }
+        }
+
+        fn get_card_values(
+            &mut self,
+            deck: &Vec<Card>,
+            match_type: MatchType,
+            deck_type: DeckType,
+        ) -> Option<Vec<Card>> {
+            let mut d = deck.clone();
+            // initialize the flag with true if deck contains cards
+            let mut is_in_buffer = d.len() > 0;
+
+            for c in d.iter_mut() {
+                let cv_opt = self.card_value_map.get(&CardValueKey {
+                    match_type,
+                    suit: c.suit,
+                    face: c.face,
+                });
+
+                // check if card was found in buffer
+                match cv_opt {
+                    Some(cv) => {
+                        c.eyes = cv.eyes;
+                        c.trump = cv.trump;
+                        c.rank = cv.rank;
+                    }
+                    None => {
+                        is_in_buffer = false;
+                        break;
+                    }
+                };
+            }
+
+            if !is_in_buffer {
+                // if not found, fetch the values from the db
+                match rules::get_deck_for_matchtype(match_type, deck_type) {
+                    Some(new_deck) => {
+                        new_deck.iter().for_each(|c| {
+                            self.card_value_map.insert(
+                                CardValueKey {
+                                    match_type,
+                                    suit: c.suit,
+                                    face: c.face,
+                                },
+                                CardValue {
+                                    eyes: c.eyes,
+                                    trump: c.trump,
+                                    rank: c.rank,
+                                },
+                            );
+                        });
+                        Some(new_deck)
+                    }
+                    None => None,
+                }
+            } else {
+                println!("Match type: {:?}", match_type);
+                println!("Deck: {:?}", d);
+
+                Some(d)
+            }
+        }
     }
 
     type GameBox = Box<Game>;
@@ -871,7 +986,7 @@ pub mod game {
                 matches: Vec::new(),
                 n_matches: 0,
                 deck_type,
-                deck_buff: HashMap::new(),
+                deck_buff: Box::new(DeckBuff::new()),
             };
 
             g.set_num_matches(n_matches);
@@ -903,6 +1018,7 @@ pub mod game {
                     // &mut self.players.iter_mut().map(|p| p).collect(),
                     &mut self.players,
                     self.deck_type,
+                    &mut self.deck_buff,
                     rng,
                 );
 
@@ -934,7 +1050,7 @@ pub mod game {
         const DB_FILE: &str = "./db/rustyheads.db";
 
         // enum deck types
-        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
         pub enum DeckType {
             Tournament,
             WithNines,
@@ -962,7 +1078,7 @@ pub mod game {
         }
 
         // enum game types
-        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash, Debug)]
         pub enum MatchType {
             Normal,
             JackSolo,
@@ -1007,7 +1123,7 @@ pub mod game {
             }
         }
 
-        pub fn get_deck_for_decktype(deck_type: DeckType) -> Vec<Card> {
+        pub fn get_deck_for_decktype(deck_type: DeckType) -> Option<Vec<Card>> {
             // Connect to an SQLite database in memory or a file
             let conn = Connection::open(DB_FILE).unwrap();
 
@@ -1043,11 +1159,14 @@ pub mod game {
             }
             println!();
 
-            cards
+            Some(cards)
         }
 
         // contains the game rules
-        pub fn get_deck_for_matchtype(match_type: MatchType, deck_type: DeckType) -> Vec<Card> {
+        pub fn get_deck_for_matchtype(
+            match_type: MatchType,
+            deck_type: DeckType,
+        ) -> Option<Vec<Card>> {
             // Connect to an SQLite database in memory or a file
             let conn = Connection::open(DB_FILE).unwrap();
 
@@ -1093,7 +1212,7 @@ pub mod game {
             }
             println!();
 
-            cards
+            Some(cards)
         }
     }
 
@@ -1125,12 +1244,35 @@ pub mod game {
 
         use super::RoundBoxes;
 
+        type DepthType = u8;
+
         // implement a tree structure to simulate a series of cards played
         #[derive(Clone)]
         struct CardNode {
             rank: RankType,
-            depth: u8,
+            depth: DepthType,
             next: Vec<usize>,
+        }
+
+        fn push_round_to_tree(round: &Round) -> Vec<CardNode> {
+            let mut nodes = round
+                .played_cards
+                .iter()
+                .enumerate()
+                .map(|(d, c)| {
+                    let depth = d.try_into().unwrap();
+                    CardNode {
+                        rank: c.rank,
+                        depth,
+                        // here we are only building linked list, so next is always one deeper
+                        next: match d + 1 < round.played_cards.len() {
+                            true => vec![d + 1],
+                            false => Vec::new(),
+                        },
+                    }
+                })
+                .collect();
+            nodes
         }
 
         pub fn simulate(current_match: &Match, current_round: &Round) {
@@ -1140,6 +1282,7 @@ pub mod game {
             card_lut.dedup();
 
             // create a tree of cards played till now
+            // (will result in kind-of linked list)
             let mut nodes = vec![CardNode {
                 rank: 0,
                 depth: 0,
@@ -1147,39 +1290,19 @@ pub mod game {
             }];
             let mut depth = 0;
 
-            for r in &current_match.rounds {
-                for c in &r.played_cards {
-                    let idx = nodes.len() - 1;
-                    nodes.last_mut().unwrap().next.push(idx);
-
-                    nodes.push(CardNode {
-                        rank: c.rank,
-                        depth,
-                        next: Vec::new(),
-                    });
-
-                    depth += 1;
-                }
+            for round in &current_match.rounds {
+                nodes.append(&mut push_round_to_tree(round));
             }
 
-            for c in &current_round.played_cards {
-                let idx = nodes.len() - 1;
-                nodes.last_mut().unwrap().next.push(idx);
-
-                nodes.push(CardNode {
-                    rank: c.rank,
-                    depth,
-                    next: Vec::new(),
-                });
-
-                depth += 1;
-            }
+            nodes.append(&mut push_round_to_tree(current_round));
 
             let mut node = nodes.first().unwrap();
             while node.next.len() > 0 {
                 print!("Node: {} ", node.rank);
                 node = &nodes[node.next[0]];
             }
+
+            //
         }
     }
 }
