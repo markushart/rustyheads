@@ -1433,7 +1433,7 @@ pub mod game {
                 .map(|p| p.get_num_cards())
                 .collect::<Vec<usize>>();
 
-            // other players cards, collected
+            // other players cards
             let mut opc = players
                 .iter_mut()
                 .enumerate()
@@ -1448,57 +1448,60 @@ pub mod game {
                 .collect::<Vec<Card>>();
 
             // build subsets of cards each player may get
-            let mut subsets = vec![Vec::new(); players.len()];
+            opc.sort();
 
-            for (i, p) in players.iter().enumerate() {
-                if i != current_round.current_player {
-                    for c in opc.iter() {
-                        // if the player could not serve this kind of card before,
-                        // he surely does not have it now
-                        // check if his serve flag is set, if yes he may have the card
-                        let sf = ServeFlag::flag_for_card(c) as ServeFlagType;
-                        if (p.data().serve_flags & sf) != 0 {
-                            subsets[i].push(c.rank);
-                        }
-                    }
-                }
-            }
-            for s in subsets.iter_mut() {
-                s.sort();
-                s.dedup();
-            }
+            let subsets = players
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| {
+                    Some(
+                        opc.iter()
+                            .filter_map(|c| {
+                                // if the player could not serve this kind of card before,
+                                // he surely does not have it now
+                                // check if his serve flag is set, if yes he may have the card
+                                let sf = ServeFlag::flag_for_card(c) as ServeFlagType;
+                                match (p.data().serve_flags & sf) != 0 {
+                                    true => Some(c.rank),
+                                    false => None,
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect::<Vec<Vec<RankType>>>();
 
             // now we have to redistribute the cards
             let mut valid = false;
             let mut c = 0;
             while valid == false && c < 100 {
                 // clear the players hands
-                for (i, p) in players.iter_mut().enumerate() {
+                players.iter_mut().enumerate().for_each(|(i, p)| {
                     if i != current_round.current_player {
                         p.data_mut().hand.clear();
                     }
-                }
+                });
 
                 // generate a new random card order
                 opc.shuffle(rng);
 
-                for c in &opc {
+                opc.iter().for_each(|c| {
                     // search a player that may get this card
-                    for (i, p) in players.iter_mut().enumerate() {
+                    players
+                        .iter_mut()
+                        .enumerate()
                         // check if the player has enough cards
-                        // this should automatically eliminate the current player
-                        if p.get_num_cards() < num_cards[i] {
-                            // check if the card is in the possible cards
-                            match subsets[i].binary_search(&c.rank) {
-                                Result::Ok(ri) => {
-                                    p.data_mut().hand.push(c.clone());
-                                    break;
-                                }
-                                Result::Err(ri) => {}
-                            }
-                        }
-                    }
-                }
+                        // this should also automatically eliminate the current player
+                        .filter(|(i, p)| p.get_num_cards() < num_cards[*i])
+                        // check if the card is in the possible cards
+                        .filter(|(i, p)| match subsets[*i].binary_search(&c.rank) {
+                            Result::Ok(ri) => true,
+                            Result::Err(ri) => false,
+                        })
+                        .for_each(|(i, p)| {
+                            p.data_mut().hand.push(c.clone());
+                        });
+                });
 
                 // TODO: check if this card constellation was already cached
 
