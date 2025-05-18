@@ -243,10 +243,10 @@ pub mod game {
             // 1     | 1     | 1     | 0       | 0       | OtherWins
             // 1     | 1     | 1     | 1       | 1       | OtherWins
             //-------------------------------------------------------------
-            // 0     | 1     | ...   | 1       | 1       | => NotPosiible
-            // 1     | 0     | ...   | 1       | 1       | => NotPosiible
-            // 1     | 1     | ...   | 0       | 1       | => NotPosiible
-            // 1     | 1     | ...   | 1       | 0       | => NotPosiible
+            // 0     | 1     | ...   | 1       | 1       | => NotPossible
+            // 1     | 0     | ...   | 1       | 1       | => NotPossible
+            // 1     | 1     | ...   | 0       | 1       | => NotPossible
+            // 1     | 1     | ...   | 1       | 0       | => NotPossible
 
             // if statement corresponding to the table above
             if !i_srv && !o_srv {
@@ -296,17 +296,45 @@ pub mod game {
         }
     }
 
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum Team {
         Contra,
         Re,
     }
 
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum PlayerType {
         Human,
         Computer,
     }
 
+    // enum with bit flags for heart, diamonds, clubs, spades and trump
+    pub enum ServeFlag {
+        Hearts = 1 << 0,
+        Diamonds = 1 << 1,
+        Clubs = 1 << 2,
+        Spades = 1 << 3,
+        Trump = 1 << 4,
+    }
+
+    impl ServeFlag {
+        fn flag_for_card(c: &Card) -> ServeFlag {
+            match c.trump {
+                true => ServeFlag::Trump,
+                false => match c.suit {
+                    Suit::Hearts => ServeFlag::Hearts,
+                    Suit::Diamonds => ServeFlag::Diamonds,
+                    Suit::Clubs => ServeFlag::Clubs,
+                    Suit::Spades => ServeFlag::Spades,
+                },
+            }
+        }
+    }
+
+    type ServeFlagType = u8;
+
     // struct for a player
+    #[derive(Clone)]
     pub struct Player {
         name: String,
         hand: Vec<Card>,
@@ -314,13 +342,23 @@ pub mod game {
         team: Team,
         dealer: bool,
         beginner: bool,
+        // whenever this player does not serve,
+        // the corresponding bit is set to 0
+        serve_flags: ServeFlagType,
     }
 
+    #[derive(Clone)]
     pub struct HumanPlayer {
         data: Player,
     }
 
+    #[derive(Clone)]
     pub struct ComputerPlayer {
+        data: Player,
+    }
+
+    #[derive(Clone)]
+    pub struct SimulatedPlayer {
         data: Player,
     }
 
@@ -333,7 +371,14 @@ pub mod game {
         fn data_mut(&mut self) -> &mut Player;
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card>;
+        fn choose_card(
+            &self,
+            possible_cards: &Vec<Card>,
+            current_match: &Match,
+            current_round: &Round,
+            players: &DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) -> Option<Card>;
 
         // function to make a call
         fn make_call(&self) -> Option<MatchType>;
@@ -346,16 +391,16 @@ pub mod game {
             self.data().hand.len()
         }
 
-        // function to play a card from the player's hand
-        fn play_card(&mut self, current_round: &Round, current_match: &Match) -> Card {
-            let possible_cards = current_round.filter_possible_cards(&self.data().hand);
-
-            let card = self.choose_card(current_match, &possible_cards).unwrap();
-
-            match self.data().hand.iter().position(|c| c == &card) {
-                Some(i) => self.data_mut().hand.swap_remove(i),
-                None => panic!("Card not found in hand"),
+        fn update_serve_flags(&mut self, current_round: &Round, card: &Card) -> ServeFlagType {
+            if current_round.played_cards.len() > 0 {
+                let first_card = current_round.played_cards[0];
+                if !card.serves_this(&first_card) {
+                    // if the card didnt serve first card, disable the flag
+                    let mask = !(ServeFlag::flag_for_card(&first_card) as ServeFlagType);
+                    self.data_mut().serve_flags &= mask;
+                }
             }
+            self.data().serve_flags
         }
 
         // function to update the player's hand
@@ -384,18 +429,29 @@ pub mod game {
         }
     }
 
+    impl Player {
+        fn new(name: String, dealer: bool) -> Player {
+            Player {
+                name,
+                hand: Vec::new(),
+                won_cards: Vec::new(),
+                team: Team::Contra,
+                dealer,
+                beginner: false,
+                serve_flags: ServeFlag::Diamonds as u8
+                    | ServeFlag::Hearts as u8
+                    | ServeFlag::Clubs as u8
+                    | ServeFlag::Spades as u8
+                    | ServeFlag::Trump as u8,
+            }
+        }
+    }
+
     impl ComputerPlayer {
         // create a new ComputerPlayer
         fn new(name: String, dealer: bool) -> ComputerPlayer {
             ComputerPlayer {
-                data: Player {
-                    name,
-                    hand: Vec::new(),
-                    won_cards: Vec::new(),
-                    team: Team::Contra,
-                    dealer,
-                    beginner: false,
-                },
+                data: Player::new(name, dealer),
             }
         }
     }
@@ -410,9 +466,19 @@ pub mod game {
         }
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card> {
+        fn choose_card(
+            &self,
+            possible_cards: &Vec<Card>,
+            current_match: &Match,
+            current_round: &Round,
+            players: &DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
+
+            simulation::simulate(current_match, current_round, players, rng);
+
             if self.get_num_cards() == 0 {
                 return None;
             } else {
@@ -434,14 +500,7 @@ pub mod game {
         // create a new ComputerPlayer
         fn new(name: String, dealer: bool) -> HumanPlayer {
             HumanPlayer {
-                data: Player {
-                    name,
-                    hand: Vec::new(),
-                    won_cards: Vec::new(),
-                    team: Team::Contra,
-                    dealer,
-                    beginner: false,
-                },
+                data: Player::new(name, dealer),
             }
         }
     }
@@ -456,14 +515,64 @@ pub mod game {
         }
 
         // function to choose a card from the player's hand
-        fn choose_card(&self, current_match: &Match, possible_cards: &Vec<Card>) -> Option<Card> {
+        fn choose_card(
+            &self,
+            possible_cards: &Vec<Card>,
+            current_match: &Match,
+            current_round: &Round,
+            players: &DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
             if self.get_num_cards() == 0 {
                 return None;
             } else {
-                // println!("{} hand: {:?}", self.name, possible_cards);
-                // println!("{} plays: {}", self.name, possible_cards[0]);
+                Some(possible_cards[0])
+            }
+        }
+
+        // function to make a call
+        fn make_call(&self) -> Option<MatchType> {
+            // for simplicity, we just return a random call
+            // in a real game, this would be more complex
+            Some(MatchType::Normal)
+        }
+    }
+
+    impl SimulatedPlayer {
+        // create a new SimulatedPlayer
+        fn new(name: String, dealer: bool) -> SimulatedPlayer {
+            SimulatedPlayer {
+                data: Player::new(name, dealer),
+            }
+        }
+    }
+
+    impl PlayerBehav for SimulatedPlayer {
+        fn data(&self) -> &Player {
+            &self.data
+        }
+
+        fn data_mut(&mut self) -> &mut Player {
+            &mut self.data
+        }
+
+        // function to choose a card from the player's hand
+        fn choose_card(
+            &self,
+            possible_cards: &Vec<Card>,
+            current_match: &Match,
+            current_round: &Round,
+            players: &DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) -> Option<Card> {
+            // for first try, we simualte games by playing random cards
+            // the simulated player needs to return a random possible card
+            // TODO: later on, integrate some heuristic for which cards to play
+            if self.get_num_cards() == 0 {
+                return None;
+            } else {
                 Some(possible_cards[0])
             }
         }
@@ -562,12 +671,13 @@ pub mod game {
             current_match: &mut Match,
             players: &mut DynPlayers,
             last_rounds_winner: usize,
+            rng: &mut rand::rngs::ThreadRng,
         ) -> Option<usize> {
             self.init_round(players.len(), last_rounds_winner);
 
             // each player plays one card
-            for _i in 0..players.len() {
-                let card = players[self.current_player].play_card(&self, current_match);
+            for i in 0..players.len() {
+                let card = self.play_card(current_match, players, rng);
 
                 self.current_player = (self.current_player + 1) % players.len();
 
@@ -611,6 +721,37 @@ pub mod game {
                 } else {
                     possible_cards
                 }
+            }
+        }
+
+        // function to play a card from the player's hand
+        fn play_card(
+            &self,
+            current_match: &Match,
+            players: &mut DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) -> Card {
+            // this function is not in the players scope as he would have to pass a vector of
+            // players to itself which is colliding with himself beeing passed as mut
+            let possible_cards =
+                self.filter_possible_cards(&players[self.current_player].data().hand);
+
+            let card = players[self.current_player]
+                .choose_card(&possible_cards, current_match, self, &*players, rng)
+                .unwrap();
+
+            // side effect: edit can_serve based
+            players[self.current_player].update_serve_flags(self, &card);
+
+            // remove the card from hand and return it
+            match players[self.current_player]
+                .data()
+                .hand
+                .iter()
+                .position(|c| c == &card)
+            {
+                Some(i) => players[self.current_player].data_mut().hand.swap_remove(i),
+                None => panic!("Card not found in hand"),
             }
         }
     }
@@ -766,7 +907,7 @@ pub mod game {
                 println!("Play round {}", self.current_round() + 1);
 
                 let mut round = Round::new();
-                round.play_round(self, players, last_round_winner);
+                round.play_round(self, players, last_round_winner, rng);
 
                 last_round_winner = round.winner;
 
@@ -1240,9 +1381,14 @@ pub mod game {
 
     mod simulation {
 
-        use crate::game::{Card, Match, RankType, Round};
+        use rand::seq::SliceRandom;
 
-        use super::RoundBoxes;
+        use crate::game::ServeFlag;
+
+        use super::{
+            Card, DynPlayer, DynPlayers, Match, Player, PlayerBehav, RankType, Round, RoundBoxes,
+            ServeFlagType, SimulatedPlayer,
+        };
 
         type DepthType = u8;
 
@@ -1275,7 +1421,106 @@ pub mod game {
             nodes
         }
 
-        pub fn simulate(current_match: &Match, current_round: &Round) {
+        pub fn redistribute_unknown_cards(
+            players: &mut Vec<SimulatedPlayer>,
+            current_match: &Match,
+            current_round: &Round,
+            rng: &mut rand::rngs::ThreadRng,
+        ) {
+            // safe the numer of cards each player had
+            let num_cards = players
+                .iter()
+                .map(|p| p.get_num_cards())
+                .collect::<Vec<usize>>();
+
+            // other players cards, collected
+            let mut opc = players
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, p)| {
+                    if i != current_round.current_player {
+                        Some(p.data_mut().hand.drain(..))
+                    } else {
+                        None
+                    }
+                })
+                .flatten()
+                .collect::<Vec<Card>>();
+
+            // build subsets of cards each player may get
+            let mut subsets = vec![Vec::new(); players.len()];
+
+            for (i, p) in players.iter().enumerate() {
+                if i != current_round.current_player {
+                    for c in opc.iter() {
+                        // if the player could not serve this kind of card before,
+                        // he surely does not have it now
+                        // check if his serve flag is set, if yes he may have the card
+                        let sf = ServeFlag::flag_for_card(c) as ServeFlagType;
+                        if (p.data().serve_flags & sf) != 0 {
+                            subsets[i].push(c.rank);
+                        }
+                    }
+                }
+            }
+            for s in subsets.iter_mut() {
+                s.sort();
+                s.dedup();
+            }
+
+            // now we have to redistribute the cards
+            let mut valid = false;
+            let mut c = 0;
+            while valid == false && c < 100 {
+                // clear the players hands
+                for (i, p) in players.iter_mut().enumerate() {
+                    if i != current_round.current_player {
+                        p.data_mut().hand.clear();
+                    }
+                }
+
+                // generate a new random card order
+                opc.shuffle(rng);
+
+                for c in &opc {
+                    // search a player that may get this card
+                    for (i, p) in players.iter_mut().enumerate() {
+                        // check if the player has enough cards
+                        // this should automatically eliminate the current player
+                        if p.get_num_cards() < num_cards[i] {
+                            // check if the card is in the possible cards
+                            match subsets[i].binary_search(&c.rank) {
+                                Result::Ok(ri) => {
+                                    p.data_mut().hand.push(c.clone());
+                                    break;
+                                }
+                                Result::Err(ri) => {}
+                            }
+                        }
+                    }
+                }
+
+                // TODO: check if this card constellation was already cached
+
+                // did all players get enough cards?
+                valid = players
+                    .iter()
+                    .enumerate()
+                    .all(|(i, p)| p.get_num_cards() == num_cards[i]);
+
+                c += 1;
+            }
+            if valid == false {
+                panic!("Distribution failed");
+            }
+        }
+
+        pub fn simulate(
+            current_match: &Match,
+            current_round: &Round,
+            players: &DynPlayers,
+            rng: &mut rand::rngs::ThreadRng,
+        ) {
             // create a LUT for cards
             let mut card_lut = current_match.deck.clone();
             card_lut.sort();
@@ -1296,13 +1541,16 @@ pub mod game {
 
             nodes.append(&mut push_round_to_tree(current_round));
 
-            let mut node = nodes.first().unwrap();
-            while node.next.len() > 0 {
-                print!("Node: {} ", node.rank);
-                node = &nodes[node.next[0]];
-            }
+            // clone the players into simulated players
+            let mut sim_pl = players
+                .iter()
+                .map(|p| SimulatedPlayer {
+                    data: p.data().clone(),
+                })
+                .collect::<Vec<SimulatedPlayer>>();
 
-            //
+            redistribute_unknown_cards(&mut sim_pl, current_match, current_round, rng);
+            // now we expand the tree until players have no cards left, evaluating the best score
         }
     }
 }
