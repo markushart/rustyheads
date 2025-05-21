@@ -429,6 +429,12 @@ pub mod game {
         }
     }
 
+    const SERVE_FLAG_ALL: ServeFlagType = ServeFlag::Diamonds as ServeFlagType
+        | ServeFlag::Hearts as ServeFlagType
+        | ServeFlag::Clubs as ServeFlagType
+        | ServeFlag::Spades as ServeFlagType
+        | ServeFlag::Trump as ServeFlagType;
+
     impl Player {
         fn new(name: String, dealer: bool) -> Player {
             Player {
@@ -438,11 +444,7 @@ pub mod game {
                 team: Team::Contra,
                 dealer,
                 beginner: false,
-                serve_flags: ServeFlag::Diamonds as u8
-                    | ServeFlag::Hearts as u8
-                    | ServeFlag::Clubs as u8
-                    | ServeFlag::Spades as u8
-                    | ServeFlag::Trump as u8,
+                serve_flags: SERVE_FLAG_ALL,
             }
         }
     }
@@ -585,13 +587,6 @@ pub mod game {
         }
     }
 
-    pub trait Winnable {
-        type Winner;
-        type CheckType;
-
-        fn determine_winner(&self, player: &Vec<&Self::CheckType>) -> Option<Self::Winner>;
-    }
-
     // struct for a game round
     // in a single rount each player plays one card from his hand
     // there are maximum 5 players
@@ -605,43 +600,6 @@ pub mod game {
 
     type RoundBox = Box<Round>;
     type RoundBoxes = Vec<RoundBox>;
-
-    impl Winnable for Round {
-        type Winner = usize;
-        type CheckType = Card;
-
-        fn determine_winner(&self, check_values: &Vec<&Self::CheckType>) -> Option<Self::Winner> {
-            if check_values.len() == 0 {
-                return None;
-            } else {
-                let first_card = check_values[0];
-                let mut winner = 0;
-
-                for i in 1..check_values.len() {
-                    let card = check_values[i];
-
-                    // compare the current winning card to first card and the current card
-                    match check_values[winner].winning_card(first_card, card) {
-                        Some(WinningCard::OtherWins) => winner = i,
-                        Some(WinningCard::SelfWins) => {
-                            // if the current card is the winning card, do nothing
-                        }
-                        Some(WinningCard::FirstWins) => {
-                            // if the first card is the winning card, do nothing
-                        }
-                        None => {
-                            panic!("Invalid card configuration")
-                        }
-                    }
-                }
-
-                // return the winner as the index of the winning player
-                winner = (self.starting_player + winner) % check_values.len();
-
-                Some(winner)
-            }
-        }
-    }
 
     impl Round {
         pub fn new() -> Round {
@@ -684,15 +642,7 @@ pub mod game {
                 self.played_cards.push(card)
             }
 
-            self.winner = self
-                .determine_winner(
-                    &self
-                        .played_cards
-                        .iter()
-                        .map(|c| &c as &Card)
-                        .collect::<Vec<&Card>>(),
-                )
-                .unwrap();
+            self.winner = self.determine_winner().unwrap();
 
             players[self.winner].collect_won_cards(&self.played_cards);
             self.played_cards.clear();
@@ -740,7 +690,7 @@ pub mod game {
                 .choose_card(&possible_cards, current_match, self, &*players, rng)
                 .unwrap();
 
-            // side effect: edit can_serve based
+            // edit can_serve based on the played card
             players[self.current_player].update_serve_flags(self, &card);
 
             // remove the card from hand and return it
@@ -754,6 +704,38 @@ pub mod game {
                 None => panic!("Card not found in hand"),
             }
         }
+
+        fn determine_winner(&self) -> Option<usize> {
+            if self.played_cards.len() == 0 {
+                return None;
+            } else {
+                let first_card = self.played_cards[0];
+                let mut winner = 0;
+
+                for i in 1..self.played_cards.len() {
+                    let card = self.played_cards[i];
+
+                    // compare the current winning card to first card and the current card
+                    match self.played_cards[winner].winning_card(&first_card, &card) {
+                        Some(WinningCard::OtherWins) => winner = i,
+                        Some(WinningCard::SelfWins) => {
+                            // if the current card is the winning card, do nothing
+                        }
+                        Some(WinningCard::FirstWins) => {
+                            // if the first card is the winning card, do nothing
+                        }
+                        None => {
+                            panic!("Invalid card configuration")
+                        }
+                    }
+                }
+
+                // return the winner as the index of the winning player
+                winner = (self.starting_player + winner) % self.played_cards.len();
+
+                Some(winner)
+            }
+        }
     }
 
     // struct for a match
@@ -765,34 +747,11 @@ pub mod game {
         deck: Vec<Card>,
         match_type: MatchType, // type of match
         n_rounds: usize,       // number of rounds in the match
+        winner: Team,
     }
 
     type MatchBox = Box<Match>;
     type MatchBoxes = Vec<MatchBox>;
-
-    impl Winnable for Match {
-        type Winner = Team;
-        type CheckType = u32;
-
-        fn determine_winner(&self, check_values: &Vec<&Self::CheckType>) -> Option<Self::Winner> {
-            if check_values.len() < 2 {
-                return None;
-            } else {
-                // // filter by team of player, sum their eye scores
-                // let re_score = self.get_team_score(check_values, Team::Re);
-                // let contra_score = self.get_team_score(check_values, Team::Contra);
-
-                // Contra wins if teams are equal
-                let contra_score = check_values[0];
-                let re_score = check_values[1];
-                if re_score <= contra_score {
-                    Some(Team::Contra)
-                } else {
-                    Some(Team::Re)
-                }
-            }
-        }
-    }
 
     impl Match {
         pub fn new() -> Match {
@@ -801,6 +760,7 @@ pub mod game {
                 deck: Vec::new(),
                 match_type: MatchType::Normal,
                 n_rounds: 0,
+                winner: Team::Contra,
             }
         }
 
@@ -859,7 +819,15 @@ pub mod game {
                 0,
                 "Number of cards is not divisible by number of players",
             );
+            // initialize players
+            for p in players.iter_mut() {
+                p.data_mut().serve_flags = SERVE_FLAG_ALL;
+                p.data_mut().won_cards.clear();
+                p.data_mut().hand.clear();
+                p.data_mut().team = Team::Contra;
+            }
 
+            // set number of rounds and buffer them
             self.set_num_rounds(self.deck.len() / players.len());
 
             // shuffle cards
@@ -916,6 +884,8 @@ pub mod game {
                 println!("Round winner: {}", players[last_round_winner].data().name);
                 println!();
             }
+
+            self.winner = self.determine_winner(players).unwrap();
         }
 
         fn shuffle_cards(&mut self, rng: &mut rand::rngs::ThreadRng) {
@@ -969,6 +939,23 @@ pub mod game {
                 .map(|i| players[(b_idx + i) % players.len()].make_call().unwrap())
                 .max()
                 .unwrap()
+        }
+
+        fn determine_winner(&self, players: &DynPlayers) -> Option<Team> {
+            if players.len() == 0 {
+                return None;
+            } else {
+                // filter by team of player, sum their eye scores
+                let re_score = self.get_team_score(players, Team::Re);
+                let contra_score = self.get_team_score(players, Team::Contra);
+
+                // Contra wins if teams are equal
+                if re_score <= contra_score {
+                    Some(Team::Contra)
+                } else {
+                    Some(Team::Re)
+                }
+            }
         }
 
         fn get_team_score(&self, players: &DynPlayers, team: Team) -> Option<u32> {
@@ -1531,12 +1518,7 @@ pub mod game {
 
             // create a tree of cards played till now
             // (will result in kind-of linked list)
-            let mut nodes = vec![CardNode {
-                rank: 0,
-                depth: 0,
-                next: Vec::new(),
-            }];
-            let mut depth = 0;
+            let mut nodes = Vec::new();
 
             for round in &current_match.rounds {
                 nodes.append(&mut push_round_to_tree(round));
@@ -1552,8 +1534,66 @@ pub mod game {
                 })
                 .collect::<Vec<SimulatedPlayer>>();
 
+            // redistribute the cards randomly
             redistribute_unknown_cards(&mut sim_pl, current_match, current_round, rng);
+
             // now we expand the tree until players have no cards left, evaluating the best score
+        }
+
+        fn minimax(
+            nodes: &mut Vec<CardNode>,
+            players: &mut Vec<SimulatedPlayer>,
+            max_depth: usize,
+            card_lut: &Vec<Card>,
+        ) -> i32 {
+            // iterative approach to minimax expanding the tree of played cards
+            // re is the maximizer, contra is the minimizer
+            // the depth of the tree is the number of cards played
+
+            if nodes.len() == 0 {
+                return 0;
+            }
+
+            let cpr = players.len(); // cards per round
+            let cig = card_lut.len() * 2; // cards in game
+
+            loop {
+                let mut current_node = nodes.pop().unwrap();
+                let cnd = current_node.depth as usize;
+
+                if cnd == max_depth || cnd == cig {
+                    // when we evaluated all moves for this node, the father node must be updated
+                } else {
+                    // reconstruct the rounds
+                    let n_cards_played = cnd % cpr;
+                    let n_rounds_played = cnd / cpr;
+
+                    let mut rounds = Vec::new();
+                    let mut lrw = 0; // last round winner
+
+                    for n in &*nodes {
+                        if (n.depth as usize) % cpr == 0 {
+                            // first card of the round
+                            let nr = Round {
+                                played_cards: Vec::new(),
+                                starting_player: lrw,
+                                current_player: lrw,
+                                winner: 0,
+                            };
+                            rounds.push(nr);
+                        }
+
+                        // add the card to the current round
+                        let r = rounds.last_mut().unwrap();
+                        r.played_cards.push(card_lut[n.rank as usize]);
+
+                        // update winner and current player
+                        r.current_player = (r.current_player + 1) % cpr;
+                    }
+
+                    // expand the node
+                }
+            }
         }
     }
 }
