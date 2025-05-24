@@ -380,6 +380,14 @@ pub mod game {
             rng: &mut rand::rngs::ThreadRng,
         ) -> Option<Card>;
 
+        //
+        fn remove_card_from_hand(&mut self, card: &Card) -> Option<Card> {
+            match self.data().hand.iter().position(|c| c == card) {
+                Some(i) => Some(self.data_mut().hand.swap_remove(i)),
+                None => None,
+            }
+        }
+
         // function to make a call
         fn make_call(&self) -> Option<MatchType>;
 
@@ -694,15 +702,9 @@ pub mod game {
             players[self.current_player].update_serve_flags(self, &card);
 
             // remove the card from hand and return it
-            match players[self.current_player]
-                .data()
-                .hand
-                .iter()
-                .position(|c| c == &card)
-            {
-                Some(i) => players[self.current_player].data_mut().hand.swap_remove(i),
-                None => panic!("Card not found in hand"),
-            }
+            players[self.current_player]
+                .remove_card_from_hand(&card)
+                .unwrap()
         }
 
         fn determine_winner(&self) -> Option<usize> {
@@ -946,8 +948,8 @@ pub mod game {
                 return None;
             } else {
                 // filter by team of player, sum their eye scores
-                let re_score = self.get_team_score(players, Team::Re);
-                let contra_score = self.get_team_score(players, Team::Contra);
+                let re_score = Match::get_team_score(players, Team::Re).unwrap();
+                let contra_score = Match::get_team_score(players, Team::Contra).unwrap();
 
                 // Contra wins if teams are equal
                 if re_score <= contra_score {
@@ -958,26 +960,31 @@ pub mod game {
             }
         }
 
-        fn get_team_score(&self, players: &DynPlayers, team: Team) -> Option<u32> {
+        fn get_team_score(players: &DynPlayers, team: Team) -> Option<u32> {
             // get the score of the team
-            let score = match team {
-                Team::Contra => players
-                    .iter()
-                    .filter_map(|p| match &p.data().team {
-                        Team::Contra => Some(p.get_eye_score()),
-                        Team::Re => None,
-                    })
-                    .sum(),
-                Team::Re => players
-                    .iter()
-                    .filter_map(|p| match &p.data().team {
-                        Team::Re => Some(p.get_eye_score()),
-                        Team::Contra => None,
-                    })
-                    .sum(),
-            };
+            if players.len() == 0 {
+                None
+            } else {
+                // filter by team of player, sum their eye scores
+                let score = match team {
+                    Team::Contra => players
+                        .iter()
+                        .filter_map(|p| match &p.data().team {
+                            Team::Contra => Some(p.get_eye_score()),
+                            Team::Re => None,
+                        })
+                        .sum(),
+                    Team::Re => players
+                        .iter()
+                        .filter_map(|p| match &p.data().team {
+                            Team::Re => Some(p.get_eye_score()),
+                            Team::Contra => None,
+                        })
+                        .sum(),
+                };
 
-            Some(score)
+                Some(score)
+            }
         }
     }
 
@@ -1368,27 +1375,32 @@ pub mod game {
 
     mod simulation {
 
-        use rand::seq::SliceRandom;
+        use std::{fmt::Pointer, usize};
 
-        use crate::game::ServeFlag;
+        use rand::seq::SliceRandom;
 
         use super::{
             Card, DynPlayer, DynPlayers, Match, Player, PlayerBehav, RankType, Round, RoundBoxes,
-            ServeFlagType, SimulatedPlayer,
+            ServeFlag, ServeFlagType, SimulatedPlayer, Team,
         };
 
         type DepthType = u8;
 
         // implement a tree structure to simulate a series of cards played
-        #[derive(Clone)]
+        #[derive(Debug)]
         struct CardNode {
             rank: RankType,
             depth: DepthType,
-            next: Vec<usize>,
+            current_player: usize,
+            current_best_move: RankType,
+            n_opt: usize,
+            score: i32,
         }
 
+        impl CardNode {}
+
         fn push_round_to_tree(round: &Round) -> Vec<CardNode> {
-            let mut nodes = round
+            let nodes = round
                 .played_cards
                 .iter()
                 .enumerate()
@@ -1397,15 +1409,55 @@ pub mod game {
                     CardNode {
                         rank: c.rank,
                         depth,
-                        // here we are only building linked list, so next is always one deeper
-                        next: match d + 1 < round.played_cards.len() {
-                            true => vec![d + 1],
-                            false => Vec::new(),
-                        },
+                        current_player: round.starting_player + d,
+                        current_best_move: c.rank,
+                        // to initialize this, set it to maximum
+                        n_opt: usize::MAX,
+                        score: 0,
                     }
                 })
                 .collect();
             nodes
+        }
+
+        fn tree_to_rounds(
+            nodes: &Vec<CardNode>,
+            cpr: usize,
+            cig: usize,
+            match_starter: usize,
+            card_lut: &Vec<Card>,
+        ) -> Vec<Round> {
+            // reconstruct the rounds from tree
+            let mut rounds = Vec::new();
+            let mut lrw = match_starter; // last round winner
+
+            for n in &*nodes {
+                if (n.depth as usize) % cpr == 0 {
+                    // first card of the round
+                    let nr = Round {
+                        played_cards: Vec::new(),
+                        starting_player: lrw,
+                        current_player: lrw,
+                        winner: 0,
+                    };
+                    rounds.push(nr);
+                }
+
+                // add the card to the current round
+                let r = rounds.last_mut().unwrap();
+                r.played_cards.push(card_lut[(n.rank - 1) as usize]);
+
+                // update winner and current player
+                r.current_player = (r.current_player + 1) % cpr;
+
+                if r.played_cards.len() == cpr {
+                    // if all players played a card, determine the winner
+                    r.winner = r.determine_winner().unwrap();
+                    lrw = r.winner;
+                }
+            }
+
+            rounds
         }
 
         pub fn redistribute_unknown_cards(
@@ -1538,6 +1590,13 @@ pub mod game {
             redistribute_unknown_cards(&mut sim_pl, current_match, current_round, rng);
 
             // now we expand the tree until players have no cards left, evaluating the best score
+            minimax(
+                &mut nodes,
+                &mut sim_pl,
+                100,
+                &card_lut,
+                current_round.starting_player,
+            );
         }
 
         fn minimax(
@@ -1545,55 +1604,170 @@ pub mod game {
             players: &mut Vec<SimulatedPlayer>,
             max_depth: usize,
             card_lut: &Vec<Card>,
+            match_starter: usize,
         ) -> i32 {
             // iterative approach to minimax expanding the tree of played cards
             // re is the maximizer, contra is the minimizer
             // the depth of the tree is the number of cards played
 
+            // this stores a rank greater than the maximum rank,
+            // its a sign that the node is uninitialized
+            let max_move = card_lut.last().unwrap().rank + 1;
+
             if nodes.len() == 0 {
-                return 0;
+                nodes.push(CardNode {
+                    rank: max_move,
+                    depth: 0,
+                    current_player: match_starter,
+                    current_best_move: max_move,
+                    n_opt: usize::MAX,
+                    score: match players[match_starter].data().team {
+                        Team::Re => i32::MIN,
+                        Team::Contra => i32::MAX,
+                    },
+                });
             }
 
             let cpr = players.len(); // cards per round
             let cig = card_lut.len() * 2; // cards in game
 
-            loop {
+            while nodes.len() > 0 {
                 let mut current_node = nodes.pop().unwrap();
-                let cnd = current_node.depth as usize;
+                let cnd = current_node.depth as usize; // current node depth
+
+                println!("current node: {:?}", current_node);
 
                 if cnd == max_depth || cnd == cig {
-                    // when we evaluated all moves for this node, the father node must be updated
-                } else {
-                    // reconstruct the rounds
-                    let n_cards_played = cnd % cpr;
-                    let n_rounds_played = cnd / cpr;
+                    // simple score: difference of won eyes per team
+                    let scores = [Team::Re, Team::Contra]
+                        .iter()
+                        .map(|t| {
+                            players
+                                .iter_mut()
+                                .filter(|p| p.data().team == *t)
+                                .map(|p| {
+                                    p.data()
+                                        .won_cards
+                                        .iter()
+                                        .map(|c| c.eyes as i32)
+                                        .sum::<i32>()
+                                })
+                                .sum()
+                        })
+                        .collect::<Vec<i32>>();
 
-                    let mut rounds = Vec::new();
-                    let mut lrw = 0; // last round winner
+                    // append the score to the predecessor
+                    nodes.last_mut().unwrap().score = scores[0] - scores[1];
+                    nodes.last_mut().unwrap().current_best_move = current_node.rank;
 
-                    for n in &*nodes {
-                        if (n.depth as usize) % cpr == 0 {
-                            // first card of the round
-                            let nr = Round {
-                                played_cards: Vec::new(),
-                                starting_player: lrw,
-                                current_player: lrw,
-                                winner: 0,
-                            };
-                            rounds.push(nr);
+                    // when popping nodes, give back the card to the player who played it
+                    players[current_node.current_player]
+                        .data_mut()
+                        .hand
+                        .push(card_lut[current_node.rank as usize].clone());
+                } else if current_node.n_opt == 0 && current_node.current_best_move < max_move {
+                    let current_player = &mut players[current_node.current_player];
+                    // node is fully expanded
+                    let maximizing_player = current_player.data().team == Team::Re;
+
+                    let mut pred_n = nodes.last_mut().unwrap(); // predecessor
+
+                    if maximizing_player {
+                        // if the player is the maximizer, we want to maximize the score
+                        if current_node.score > pred_n.score {
+                            pred_n.score = current_node.score;
+                            pred_n.current_best_move = current_node.rank;
                         }
-
-                        // add the card to the current round
-                        let r = rounds.last_mut().unwrap();
-                        r.played_cards.push(card_lut[n.rank as usize]);
-
-                        // update winner and current player
-                        r.current_player = (r.current_player + 1) % cpr;
+                    } else {
+                        // if the player is the minimizer, we want to minimize the score
+                        if current_node.score < pred_n.score {
+                            pred_n.score = current_node.score;
+                            pred_n.current_best_move = current_node.rank;
+                        }
                     }
 
-                    // expand the node
+                    // when popping nodes, give back the card to the player who played it
+                    current_player
+                        .data_mut()
+                        .hand
+                        .push(card_lut[current_node.rank as usize].clone());
+                } else {
+                    // more moves to explore
+                    let current_player = &mut players[current_node.current_player];
+
+                    // we have to distinct between a finished round and a running round
+                    let mut possible_cards = Vec::new();
+
+                    // in case this is the last player to play a card, determine the winner
+                    let mut next_player = (current_node.current_player + 1) % cpr;
+
+                    if cnd % cpr == 0 {
+                        // player may play every card
+                        possible_cards = current_player.data().hand.clone();
+
+                    } else {
+                        // get the rounds played in this simulation
+                        let round = tree_to_rounds(&nodes, cpr, cig, match_starter, card_lut);
+                        possible_cards = round
+                            .last()
+                            .unwrap()
+                            .filter_possible_cards(&current_player.data().hand);
+
+                        // get the winner of current round to be the next starter
+                        if round.last().unwrap().played_cards.len() == cpr {
+                            next_player = round.last().unwrap().determine_winner().unwrap();
+                        };
+                    }
+
+                    if possible_cards.len() == 0 {
+                        panic!("No possible cards");
+                    }
+
+                    possible_cards.sort();
+
+                    if current_node.n_opt > cig {
+                        // this seems to be an initial node
+                        current_node.n_opt = possible_cards.len() - 1;
+                    } else {
+                        // we used one card, so n_opt is decremented
+                        current_node.n_opt -= 1;
+                    }
+
+                    println!("current node: {:?}", current_node);
+                    println!(
+                        "{} cards: {:?}",
+                        current_player.data().name,
+                        current_player.data().hand
+                    );
+                    println!(
+                        "{} possible cards: {:?}",
+                        current_player.data().name,
+                        possible_cards
+                    );
+
+                    // removed card from players hand
+                    let rc = current_player
+                        .remove_card_from_hand(&possible_cards[current_node.n_opt])
+                        .unwrap();
+
+                    let n = CardNode {
+                        rank: rc.rank,
+                        depth: current_node.depth + 1,
+                        current_player: next_player,
+                        // initialize the best move to maximum rank + 1, so its clear its uninitialized
+                        current_best_move: max_move,
+                        n_opt: usize::MAX,
+                        score: match current_player.data().team {
+                            Team::Re => i32::MIN,
+                            Team::Contra => i32::MAX,
+                        },
+                    };
+
+                    nodes.push(current_node);
+                    nodes.push(n);
                 }
             }
+            0
         }
     }
 }
