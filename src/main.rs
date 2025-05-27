@@ -1621,7 +1621,55 @@ pub mod game {
             };
 
             // now we expand the tree until players have no cards left, evaluating the best score
-            minimax(&mut nodes, &mut sim_pl, 40, &card_lut, match_starter);
+            for c in Round::filter_possible_cards(
+                &current_round.played_cards,
+                &players[current_round.current_player].data().hand,
+            ) {
+                // call minimax for each card the current player can play
+                nodes.push(CardNode::new(
+                    c.rank,
+                    0,
+                    c.rank,
+                    nodes.len() as DepthType,
+                    current_round.current_player,
+                    // TODO: replace this or do expansion in minimax
+                    Vec::new(),
+                ));
+                minimax(&mut nodes, &mut sim_pl, 40, &card_lut, match_starter);
+            }
+        }
+
+        fn possible_cards_from_tree(nodes: &Vec<CardNode>, cards_played: usize, ) -> Vec<Card> {
+            if cards_played == 0 {
+                // player may play every card
+                current_player.data().hand.clone()
+            } else {
+                // get cards_played predecessors of this node
+                let played_cards = nodes
+                    .iter()
+                    .rev()
+                    .take(cards_played)
+                    .map(|n| card_lut[n.rank as usize - 1].clone())
+                    .rev()
+                    .collect::<Vec<Card>>();
+
+                Round::filter_possible_cards(&played_cards, &current_player.data().hand)
+            }
+        }
+
+        fn winner_from_tree(nodes: &Vec<CardNode>) -> Option<usize> {
+            // get the winner of current round to be the next starter
+            if played_cards.len() == cpr {
+                Round {
+                    played_cards: played_cards.clone(),
+                    starting_player,
+                    current_player: next_player,
+                    winner: 0,
+                }
+                .determine_winner()
+            } else {
+                None
+            };
         }
 
         fn minimax(
@@ -1634,22 +1682,6 @@ pub mod game {
             // iterative approach to minimax expanding the tree of played cards
             // re is the maximizer, contra is the minimizer
             // the depth of the tree is the number of cards played
-
-            if nodes.len() == 0 {
-                nodes.push(CardNode::new(
-                    0,
-                    0,
-                    0,
-                    0,
-                    match_starter,
-                    players[match_starter]
-                        .data()
-                        .hand
-                        .iter()
-                        .map(|c| c.rank)
-                        .collect(),
-                ));
-            }
 
             let cpr = players.len(); // cards per round
             let cig = card_lut.len() * 2; // cards in game
@@ -1738,7 +1770,10 @@ pub mod game {
                             .rev()
                             .collect::<Vec<Card>>();
 
-                        possible_cards = Round::filter_possible_cards(&played_cards, &current_player.data().hand);
+                        possible_cards = Round::filter_possible_cards(
+                            &played_cards,
+                            &current_player.data().hand,
+                        );
 
                         // get the winner of current round to be the next starter
                         if played_cards.len() == cpr {
