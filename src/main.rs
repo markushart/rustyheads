@@ -1,4 +1,5 @@
 use game::rules;
+use rand_chacha::rand_core::SeedableRng;
 
 pub mod game {
     use rand::seq::SliceRandom;
@@ -296,7 +297,7 @@ pub mod game {
         }
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
     pub enum Team {
         Contra,
         Re,
@@ -362,6 +363,8 @@ pub mod game {
         data: Player,
     }
 
+    type RngType = rand_chacha::ChaCha20Rng;
+
     type DynPlayer = Box<dyn PlayerBehav>;
     type DynPlayers = Vec<DynPlayer>;
 
@@ -377,7 +380,7 @@ pub mod game {
             current_match: &Match,
             current_round: &Round,
             players: &DynPlayers,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) -> Option<Card>;
 
         //
@@ -437,6 +440,7 @@ pub mod game {
         }
     }
 
+    // sets all bits of serve flags to 1 (initial state)
     const SERVE_FLAG_ALL: ServeFlagType = ServeFlag::Diamonds as ServeFlagType
         | ServeFlag::Hearts as ServeFlagType
         | ServeFlag::Clubs as ServeFlagType
@@ -482,7 +486,7 @@ pub mod game {
             current_match: &Match,
             current_round: &Round,
             players: &DynPlayers,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
@@ -491,12 +495,12 @@ pub mod game {
                 return None;
             } else if possible_cards.len() == 1 {
                 // if there is only one card, play it
-                println!("{} plays card: {:?}", self.data().name, possible_cards[0],);
+                println!("{}({:?}) plays card: {:?}", self.data().name, self.data().team, possible_cards[0],);
                 Some(possible_cards[0])
             } else {
-                print!("{} hand: {:?}, ", self.data().name, possible_cards);
+                // print!("{} hand: {:?}, ", self.data().name, possible_cards);
 
-                let (best_move, best_score) = simulation::simulate(
+                let (best_move, _) = simulation::simulate(
                     current_match,
                     current_round,
                     possible_cards,
@@ -505,12 +509,11 @@ pub mod game {
                     rng,
                 );
 
-                println!(
-                    "{:?} best move: {} with score: {}",
-                    self.data().name,
-                    best_move,
-                    best_score,
-                );
+                // println!(
+                //     "{:?} best move: {}
+                //     self.data().name,
+                //     best_move,
+                // );
 
                 let card = possible_cards
                     .iter()
@@ -518,7 +521,7 @@ pub mod game {
                     .unwrap()
                     .clone();
 
-                println!("{} plays card: {:?}", self.data().name, card,);
+                println!("{}({:?}) plays card: {:?}", self.data().name, self.data().team, card,);
 
                 Some(card)
             }
@@ -554,10 +557,10 @@ pub mod game {
         fn choose_card(
             &self,
             possible_cards: &Vec<Card>,
-            current_match: &Match,
-            current_round: &Round,
-            players: &DynPlayers,
-            rng: &mut rand::rngs::ThreadRng,
+            _current_match: &Match,
+            _current_round: &Round,
+            _players: &DynPlayers,
+            _rng: &mut RngType,
         ) -> Option<Card> {
             // for simplicity, we just return the first card in the hand
             // in a real game, this would be more complex
@@ -576,15 +579,6 @@ pub mod game {
         }
     }
 
-    impl SimulatedPlayer {
-        // create a new SimulatedPlayer
-        fn new(name: String, dealer: bool) -> SimulatedPlayer {
-            SimulatedPlayer {
-                data: Player::new(name, dealer),
-            }
-        }
-    }
-
     impl PlayerBehav for SimulatedPlayer {
         fn data(&self) -> &Player {
             &self.data
@@ -598,10 +592,10 @@ pub mod game {
         fn choose_card(
             &self,
             possible_cards: &Vec<Card>,
-            current_match: &Match,
-            current_round: &Round,
-            players: &DynPlayers,
-            rng: &mut rand::rngs::ThreadRng,
+            _current_match: &Match,
+            _current_round: &Round,
+            _players: &DynPlayers,
+            _rng: &mut RngType,
         ) -> Option<Card> {
             // for first try, we simualte games by playing random cards
             // the simulated player needs to return a random possible card
@@ -663,7 +657,7 @@ pub mod game {
             current_match: &mut Match,
             players: &mut DynPlayers,
             last_rounds_winner: usize,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) -> Option<usize> {
             self.init_round(players.len(), last_rounds_winner);
 
@@ -714,7 +708,7 @@ pub mod game {
             &self,
             current_match: &Match,
             players: &mut DynPlayers,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) -> Card {
             // this function is not in the players scope as he would have to pass a vector of
             // players to itself which is colliding with himself beeing passed as mut
@@ -837,7 +831,7 @@ pub mod game {
             players: &mut DynPlayers,
             deck_type: DeckType,
             deck_buff: &mut DeckBuff,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) {
             self.deck.clear();
             self.rounds.clear();
@@ -876,7 +870,7 @@ pub mod game {
             players: &mut DynPlayers,
             deck_type: DeckType,
             deck_buff: &mut DeckBuff,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) {
             // init game, shuffle and distribute cards
             self.init_match(players, deck_type, deck_buff, rng);
@@ -919,7 +913,7 @@ pub mod game {
             self.winner = self.determine_winner(players).unwrap();
         }
 
-        fn shuffle_cards(&mut self, rng: &mut rand::rngs::ThreadRng) {
+        fn shuffle_cards(&mut self, rng: &mut RngType) {
             // shuffle the cards
             self.deck.shuffle(rng);
         }
@@ -1139,9 +1133,6 @@ pub mod game {
         }
     }
 
-    type GameBox = Box<Game>;
-    type GameBoxes = Vec<GameBox>;
-
     impl Game {
         // function to start a new game
         pub fn new(n_matches: usize, deck_type: DeckType) -> Game {
@@ -1170,7 +1161,7 @@ pub mod game {
             self.players.push(player);
         }
 
-        pub fn play_game(&mut self, n_matches: usize, rng: &mut rand::rngs::ThreadRng) {
+        pub fn play_game(&mut self, n_matches: usize, rng: &mut RngType) {
             self.set_num_matches(n_matches);
 
             for _i in 0..self.n_matches {
@@ -1410,8 +1401,8 @@ pub mod game {
         use rand::seq::SliceRandom;
 
         use super::{
-            Card, DynPlayers, Match, PlayerBehav, RankType, Round, ServeFlag, ServeFlagType,
-            SimulatedPlayer, Team,
+            Card, RngType, DynPlayers, Match, Player, PlayerBehav, RankType, Round, ServeFlag,
+            ServeFlagType, SimulatedPlayer, Team,
         };
 
         type DepthType = u8;
@@ -1421,8 +1412,9 @@ pub mod game {
         struct CardNode {
             rank: RankType,
             score: i32,
+            alpha: i32,
+            beta: i32,
             visited: bool,
-            best_move: RankType,
             depth: DepthType,
             current_player: usize,
             cards_to_play: Vec<RankType>,
@@ -1431,17 +1423,17 @@ pub mod game {
         impl CardNode {
             fn new(
                 rank: RankType,
-                score: i32,
-                best_move: RankType,
+                team: Team,
                 depth: DepthType,
                 current_player: usize,
                 cards_to_play: Vec<RankType>,
             ) -> Self {
                 CardNode {
                     rank,
-                    score,
+                    score: get_initial_score_for_team(team),
+                    alpha: get_initial_score_for_team(Team::Re),
+                    beta: get_initial_score_for_team(Team::Contra),
                     visited: false,
-                    best_move,
                     depth,
                     current_player,
                     cards_to_play,
@@ -1449,74 +1441,108 @@ pub mod game {
             }
         }
 
-        fn push_round_to_tree(round: &Round, cpr: usize) -> Vec<CardNode> {
+        fn get_initial_score_for_team(team: Team) -> i32 {
+            // initial score for a team is 0
+            match team {
+                Team::Re => i32::MIN,     // Re is maximizer, so start with min score
+                Team::Contra => i32::MAX, // Contra is minimizer, so start with max score
+            }
+        }
+
+        fn get_initial_score_for_player(player: &Player) -> i32 {
+            // initial score for a player is 0
+            get_initial_score_for_team(player.team)
+        }
+
+        fn get_score_for_team(
+            old_optimum: i32,
+            new_score: i32,
+            optimum_rank: RankType,
+            new_rank: RankType,
+            team: Team,
+        ) -> (RankType, i32) {
+            // get the score for a player based on his team
+            match team {
+                Team::Re => {
+                    if new_score > old_optimum {
+                        (new_rank, new_score)
+                    } else {
+                        (optimum_rank, old_optimum)
+                    }
+                }
+                Team::Contra => {
+                    if new_score < old_optimum {
+                        (new_rank, new_score)
+                    } else {
+                        (optimum_rank, old_optimum)
+                    }
+                }
+            }
+        }
+
+        fn get_score_for_player(
+            old_optimum: i32,
+            new_score: i32,
+            optimum_rank: RankType,
+            new_rank: RankType,
+            player: &Player,
+        ) -> (RankType, i32) {
+            // get the score for a player based on his team
+            get_score_for_team(old_optimum, new_score, optimum_rank, new_rank, player.team)
+        }
+
+        fn get_alpha_beta_for_team(
+            old_alpha: i32,
+            old_beta: i32,
+            new_score: i32,
+            team: Team,
+        ) -> (i32, i32) {
+            // get the alpha and beta values for a team
+            match team {
+                Team::Re => {
+                    // Re is maximizer, so update alpha
+                    (old_alpha.max(new_score), old_beta)
+                }
+                Team::Contra => {
+                    // Contra is minimizer, so update beta
+                    (old_alpha, old_beta.min(new_score))
+                }
+            }
+        }
+
+        fn is_branch_prunable(alpha: i32, beta: i32, team: Team) -> bool {
+            // check if the branch can be pruned
+            match team {
+                Team::Re => alpha >= beta, // Re is maximizer, so prune if alpha >= beta
+                Team::Contra => alpha <= beta, // Contra is minimizer, so prune if alpha <= beta
+            }
+        }
+
+        fn push_round_to_tree(round: &Round, players: &Vec<SimulatedPlayer>) -> Vec<CardNode> {
+            let cpr = players.len(); // cards per round
             round
                 .played_cards
                 .iter()
                 .enumerate()
                 .map(|(d, c)| {
                     let depth = d.try_into().unwrap();
+                    let current_player = (round.starting_player + d) % cpr;
                     CardNode::new(
                         c.rank,
-                        0,
-                        c.rank,
+                        players[current_player].data().team,
                         depth,
-                        (round.starting_player + d) % cpr,
+                        current_player,
                         Vec::new(), // since cards are played allready this is empty
                     )
                 })
                 .collect::<Vec<CardNode>>()
         }
 
-        fn tree_to_rounds(
-            nodes: &Vec<CardNode>,
-            cpr: usize, // cards per round
-            cig: usize, // cards in game
-            match_starter: usize,
-            card_lut: &Vec<Card>,
-        ) -> Vec<Round> {
-            // reconstruct the rounds from tree
-            let mut rounds = Vec::new();
-            let mut lrw = match_starter; // last round winner
-
-            for n in &*nodes {
-                if n.rank == 0 {
-                    panic!("Invalid node with rank 0 in tree: {:?}", n);
-                } else if (n.depth as usize) % cpr == 0 {
-                    // first card of the round
-                    let nr = Round {
-                        played_cards: Vec::new(),
-                        starting_player: lrw,
-                        current_player: lrw,
-                        winner: 0,
-                    };
-                    rounds.push(nr);
-                }
-
-                // add the card to the current round
-                let r = rounds.last_mut().unwrap();
-                r.played_cards.push(card_lut[(n.rank - 1) as usize]);
-
-                // update winner and current player
-                r.current_player = (r.current_player + 1) % cpr;
-
-                if r.played_cards.len() == cpr {
-                    // if all players played a card, determine the winner
-                    r.winner = Round::determine_winner(&r.played_cards, r.starting_player).unwrap();
-                    lrw = r.winner;
-                }
-            }
-
-            rounds
-        }
-
         pub fn redistribute_unknown_cards(
             players: &mut Vec<SimulatedPlayer>,
-            current_match: &Match,
             current_round: &Round,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
             max_retries: usize,
-            card_lut: &Vec<Card>,
         ) {
             // safe the numer of cards each player had
             let num_cards = players
@@ -1615,22 +1641,16 @@ pub mod game {
             possible_cards: &Vec<Card>,
             players: &DynPlayers,
             max_depth: usize,
-            rng: &mut rand::rngs::ThreadRng,
+            rng: &mut RngType,
         ) -> (RankType, i32) {
             // create a LUT for cards
             let mut card_lut = current_match.deck.clone();
             card_lut.sort();
             card_lut.dedup();
 
-            // create a tree of cards played till now
-            // (will result in kind-of linked list)
-            let mut nodes = Vec::new();
-
             // for round in &current_match.rounds {
             //     nodes.append(&mut push_round_to_tree(round, players.len()));
             // }
-
-            nodes.append(&mut push_round_to_tree(current_round, players.len()));
 
             // clone the players into simulated players
             let mut sim_pl = players
@@ -1640,57 +1660,71 @@ pub mod game {
                 })
                 .collect::<Vec<SimulatedPlayer>>();
 
-            // modify initial score
-            for n in nodes.iter_mut() {
-                n.score = match sim_pl[n.current_player].data().team {
-                    Team::Re => i32::MIN,
-                    Team::Contra => i32::MAX,
-                };
-            }
-
             // redistribute the cards randomly
             // TODO: make this work... currently hands can be duplicated
             // redistribute_unknown_cards(&mut sim_pl, current_match, current_round, rng, 100, &card_lut);
 
+            return minimax_broad(
+                possible_cards,
+                &mut sim_pl,
+                current_round,
+                max_depth,
+                &card_lut,
+            );
+        }
+
+        fn minimax_broad(
+            possible_cards: &Vec<Card>,
+            players: &mut Vec<SimulatedPlayer>,
+            current_round: &Round,
+            max_depth: usize,
+            card_lut: &Vec<Card>,
+        ) -> (RankType, i32) {
+            // we call the depth first search minimax algorithm for every possible card
+            // and return the move with the best score
+
+            // create a tree of cards played till now
+            // (will result in kind-of linked list)
+            let mut nodes = Vec::new();
+            nodes.append(&mut push_round_to_tree(current_round, players));
+
             // now we expand the tree until players have no cards left, evaluating the best score
-            let mut best_global_move = 0;
-            let mut best_global_score = match sim_pl[current_round.current_player].data().team {
-                Team::Re => i32::MIN,
-                Team::Contra => i32::MAX,
+            struct BestMove {
+                rank: RankType,
+                score: i32,
+            }
+
+            let mut bm = BestMove {
+                rank: 0,
+                score: get_initial_score_for_player(&players[current_round.current_player].data()),
             };
+
             for c in possible_cards {
                 // call minimax for each card the current player can play
                 nodes.push(CardNode::new(
                     c.rank,
-                    match sim_pl[current_round.current_player].data().team {
-                        Team::Re => i32::MIN,
-                        Team::Contra => i32::MAX,
-                    },
-                    c.rank,
+                    players[current_round.current_player].data().team,
                     nodes.len() as DepthType,
                     current_round.current_player,
                     Vec::new(),
                 ));
 
-                sim_pl[current_round.current_player].remove_card_from_hand(&c);
+                players[current_round.current_player].remove_card_from_hand(&c);
 
                 // when returning from minimax, last card will be pushed into players hand again
-                let (_, best_score) = minimax(&mut nodes, &mut sim_pl, max_depth, &card_lut);
+                let best_score = minimax(&mut nodes, players, max_depth, &card_lut);
 
-                if sim_pl[current_round.current_player].data().team == Team::Re {
-                    if best_score > best_global_score {
-                        best_global_score = best_score;
-                        best_global_move = c.rank;
-                    }
-                } else {
-                    if best_score < best_global_score {
-                        best_global_score = best_score;
-                        best_global_move = c.rank;
-                    }
-                }
+                (bm.rank, bm.score) = get_score_for_player(
+                    bm.score,
+                    best_score,
+                    bm.rank,
+                    c.rank,
+                    players[current_round.current_player].data(),
+                );
             }
 
-            return (best_global_move, best_global_score);
+            // return the best move
+            (bm.rank, bm.score)
         }
 
         fn minimax(
@@ -1698,7 +1732,7 @@ pub mod game {
             players: &mut Vec<SimulatedPlayer>,
             max_depth: usize,
             card_lut: &Vec<Card>,
-        ) -> (RankType, i32) {
+        ) -> i32 {
             // iterative approach to minimax expanding the tree of played cards
             // re is the maximizer, contra is the minimizer
             // the depth of the tree is the number of cards played
@@ -1762,7 +1796,6 @@ pub mod game {
                     // simple score: difference of won eyes per team
                     // set the score of the predecessor
                     current_node.score = re_score - contra_score;
-                    current_node.best_move = current_node.rank;
                     current_node.visited = true;
                     nodes.push(current_node.clone());
                 } else if current_node.cards_to_play.len() == 0 && current_node.visited == true {
@@ -1776,31 +1809,33 @@ pub mod game {
 
                     if nodes.len() == inl {
                         // if this is the first node we are evaluating
-                        // println!("return at player {} hand {:?}", players[current_node.current_player].data().name, players[current_node.current_player].data().hand);
-                        return (current_node.best_move, current_node.score);
+                        return current_node.score;
                     } else {
                         let last_node = nodes.last_mut().unwrap();
-                        // we update the above score, so its relevant if last player is maximizer or minimizer
-                        let maximizing_player =
-                            players[last_node.current_player].data().team == Team::Re;
 
                         if current_node.score == i32::MIN || current_node.score == i32::MAX {
                             panic!("Invalid score: {}, depth: {}", current_node.score, cnd);
                         }
+                        let team = players[last_node.current_player].data().team;
 
-                        if maximizing_player {
-                            // if the player is the maximizer, we want to maximize the score
-                            if current_node.score > last_node.score {
-                                last_node.score = current_node.score;
-                                last_node.best_move = current_node.rank;
-                            }
-                        } else {
-                            // if the player is the minimizer, we want to minimize the score
-                            if current_node.score < last_node.score {
-                                last_node.score = current_node.score;
-                                last_node.best_move = current_node.rank;
-                            }
+                        /* ALPHA-BETA pruning */
+                        // we update the above score
+                        (_, last_node.score) =
+                            get_score_for_team(last_node.score, current_node.score, 0, 0, team);
+
+                        // update alpha and beta values
+                        (last_node.alpha, last_node.beta) = get_alpha_beta_for_team(
+                            last_node.alpha,
+                            last_node.beta,
+                            current_node.score,
+                            team,
+                        );
+
+                        if is_branch_prunable(last_node.alpha, last_node.beta, team) {
+                            // prune by removing the other possible moves
+                            // last_node.cards_to_play.clear();
                         }
+                        /* ALPHA-BETA pruning */
                     }
                 } else {
                     // more moves to explore
@@ -1876,11 +1911,7 @@ pub mod game {
                         nodes.push(current_node);
                         nodes.push(CardNode::new(
                             rc.rank,
-                            match players[next_player].data().team {
-                                Team::Re => i32::MIN,
-                                Team::Contra => i32::MAX,
-                            },
-                            0,
+                            players[next_player].data().team,
                             new_depth,
                             next_player,
                             Vec::new(),
@@ -1894,7 +1925,9 @@ pub mod game {
 
 fn main() {
     // create a new game using a random number generator
-    let mut rng_shuffle = rand::thread_rng();
+    // we need a fixed seed for the rng to make the game reproducible
+    // let mut rng_shuffle = rand::thread_rng();
+    let mut rng_shuffle = rand_chacha::ChaCha20Rng::seed_from_u64(42);
     let mut game = game::Game::new(1, rules::DeckType::Tournament);
 
     // add players to the game
