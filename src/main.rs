@@ -1833,7 +1833,7 @@ pub mod game {
 
                         if is_branch_prunable(last_node.alpha, last_node.beta, team) {
                             // prune by removing the other possible moves
-                            // last_node.cards_to_play.clear();
+                            last_node.cards_to_play.clear();
                         }
                         /* ALPHA-BETA pruning */
                     }
