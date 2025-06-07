@@ -495,7 +495,12 @@ pub mod game {
                 return None;
             } else if possible_cards.len() == 1 {
                 // if there is only one card, play it
-                println!("{}({:?}) plays card: {:?}", self.data().name, self.data().team, possible_cards[0],);
+                println!(
+                    "{}({:?}) plays card: {:?}",
+                    self.data().name,
+                    self.data().team,
+                    possible_cards[0],
+                );
                 Some(possible_cards[0])
             } else {
                 // print!("{} hand: {:?}, ", self.data().name, possible_cards);
@@ -507,6 +512,7 @@ pub mod game {
                     players,
                     8,
                     rng,
+                    false,
                 );
 
                 // println!(
@@ -521,7 +527,12 @@ pub mod game {
                     .unwrap()
                     .clone();
 
-                println!("{}({:?}) plays card: {:?}", self.data().name, self.data().team, card,);
+                println!(
+                    "{}({:?}) plays card: {:?}",
+                    self.data().name,
+                    self.data().team,
+                    card,
+                );
 
                 Some(card)
             }
@@ -1401,7 +1412,7 @@ pub mod game {
         use rand::seq::SliceRandom;
 
         use super::{
-            Card, RngType, DynPlayers, Match, Player, PlayerBehav, RankType, Round, ServeFlag,
+            Card, DynPlayers, Match, Player, PlayerBehav, RankType, RngType, Round, ServeFlag,
             ServeFlagType, SimulatedPlayer, Team,
         };
 
@@ -1480,6 +1491,57 @@ pub mod game {
             }
         }
 
+        fn get_score_from_nodes(
+            nodes: &Vec<CardNode>,
+            current_node: &CardNode,
+            players: &Vec<SimulatedPlayer>,
+            card_lut: &Vec<Card>,
+        ) -> i32 {
+            // go through the nodes and collect the cards won by each team
+            let mut re_score = 0;
+            let mut contra_score = 0;
+            let mut starting_player = match nodes.first() {
+                Some(n) => n.current_player,
+                None => current_node.current_player,
+            };
+
+            // cards played in this round
+            let mut round_cards = Vec::new();
+
+            for n in nodes {
+                let card = &card_lut[n.rank as usize - 1];
+
+                round_cards.push(card.clone());
+
+                // check if all cards are played in this round
+                if round_cards.len() == players.len() {
+                    let winner = Round::determine_winner(&round_cards, starting_player).unwrap();
+
+                    if players[winner].data().team == Team::Re {
+                        re_score += round_cards.iter().map(|c| c.eyes as i32).sum::<i32>();
+                    } else {
+                        contra_score += round_cards.iter().map(|c| c.eyes as i32).sum::<i32>();
+                    }
+
+                    starting_player = winner;
+                    round_cards.clear();
+                }
+            }
+
+            if re_score == i32::MIN || contra_score == i32::MAX {
+                panic!(
+                    "Invalid scores: re_score: {}, contra_score: {}, depth: {}",
+                    re_score,
+                    contra_score,
+                    nodes.len()
+                );
+            }
+
+            // simple score: difference of won eyes per team
+            // set the score of the predecessor
+            re_score - contra_score
+        }
+
         fn get_score_for_player(
             old_optimum: i32,
             new_score: i32,
@@ -1518,6 +1580,51 @@ pub mod game {
             }
         }
 
+        fn get_next_player(
+            played_cards: &Vec<Card>,
+            cards_per_round: usize,
+            current_player: usize,
+        ) -> usize {
+            match played_cards.len() == cards_per_round {
+                true => {
+                    Round::determine_winner(&played_cards, cards_per_round - current_player - 1)
+                        .unwrap()
+                }
+                false => (current_player + 1) % cards_per_round,
+            }
+        }
+
+        fn filter_sort_possible_cards(
+            played_cards: &Vec<Card>,
+            players: &Vec<SimulatedPlayer>,
+            current_player: usize,
+        ) -> Vec<RankType> {
+            let next_player = get_next_player(played_cards, players.len(), current_player);
+
+            let first_move = played_cards.len() == players.len();
+
+            // new round, all cards are possible
+            let mut possible_cards: Vec<u8> = match first_move {
+                true => players[next_player]
+                    .data()
+                    .hand
+                    .iter()
+                    .map(|c| c.rank)
+                    .collect(),
+                false => {
+                    Round::filter_possible_cards(&played_cards, &players[next_player].data().hand)
+                        .iter()
+                        .map(|c| c.rank)
+                        .collect()
+                }
+            };
+
+            // check if we can acutally win
+            
+
+            possible_cards
+        }
+
         fn push_round_to_tree(round: &Round, players: &Vec<SimulatedPlayer>) -> Vec<CardNode> {
             let cpr = players.len(); // cards per round
             round
@@ -1538,102 +1645,102 @@ pub mod game {
                 .collect::<Vec<CardNode>>()
         }
 
-        pub fn redistribute_unknown_cards(
-            players: &mut Vec<SimulatedPlayer>,
-            current_round: &Round,
-            rng: &mut RngType,
-            max_retries: usize,
-        ) {
-            // safe the numer of cards each player had
-            let num_cards = players
-                .iter()
-                .map(|p| p.get_num_cards())
-                .collect::<Vec<usize>>();
+        // pub fn redistribute_unknown_cards(
+        //     players: &mut Vec<SimulatedPlayer>,
+        //     current_round: &Round,
+        //     rng: &mut RngType,
+        //     max_retries: usize,
+        // ) {
+        //     // safe the numer of cards each player had
+        //     let num_cards = players
+        //         .iter()
+        //         .map(|p| p.get_num_cards())
+        //         .collect::<Vec<usize>>();
 
-            // other players cards
-            let mut opc = players
-                .iter_mut()
-                .enumerate()
-                .filter_map(|(i, p)| {
-                    if i != current_round.current_player {
-                        Some(p.data_mut().hand.drain(..))
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-                .collect::<Vec<Card>>();
+        //     // other players cards
+        //     let mut opc = players
+        //         .iter_mut()
+        //         .enumerate()
+        //         .filter_map(|(i, p)| {
+        //             if i != current_round.current_player {
+        //                 Some(p.data_mut().hand.drain(..))
+        //             } else {
+        //                 None
+        //             }
+        //         })
+        //         .flatten()
+        //         .collect::<Vec<Card>>();
 
-            // build subsets of cards each player may get
-            opc.sort();
+        //     // build subsets of cards each player may get
+        //     opc.sort();
 
-            let subsets = players
-                .iter()
-                .enumerate()
-                .filter_map(|(i, p)| {
-                    Some(
-                        opc.iter()
-                            .filter_map(|c| {
-                                // if the player could not serve this kind of card before,
-                                // he surely does not have it now
-                                // check if his serve flag is set, if yes he may have the card
-                                let sf = ServeFlag::flag_for_card(c) as ServeFlagType;
-                                match (p.data().serve_flags & sf) != 0 {
-                                    true => Some(c.rank),
-                                    false => None,
-                                }
-                            })
-                            .collect(),
-                    )
-                })
-                .collect::<Vec<Vec<RankType>>>();
+        //     let subsets = players
+        //         .iter()
+        //         .enumerate()
+        //         .filter_map(|(i, p)| {
+        //             Some(
+        //                 opc.iter()
+        //                     .filter_map(|c| {
+        //                         // if the player could not serve this kind of card before,
+        //                         // he surely does not have it now
+        //                         // check if his serve flag is set, if yes he may have the card
+        //                         let sf = ServeFlag::flag_for_card(c) as ServeFlagType;
+        //                         match (p.data().serve_flags & sf) != 0 {
+        //                             true => Some(c.rank),
+        //                             false => None,
+        //                         }
+        //                     })
+        //                     .collect(),
+        //             )
+        //         })
+        //         .collect::<Vec<Vec<RankType>>>();
 
-            // now we have to redistribute the cards
-            let mut valid = false;
-            let mut c = 0;
-            while valid == false && c < max_retries {
-                // clear the players hands
-                players.iter_mut().enumerate().for_each(|(i, p)| {
-                    if i != current_round.current_player {
-                        p.data_mut().hand.clear();
-                    }
-                });
+        //     // now we have to redistribute the cards
+        //     let mut valid = false;
+        //     let mut c = 0;
+        //     while valid == false && c < max_retries {
+        //         // clear the players hands
+        //         players.iter_mut().enumerate().for_each(|(i, p)| {
+        //             if i != current_round.current_player {
+        //                 p.data_mut().hand.clear();
+        //             }
+        //         });
 
-                // generate a new random card order
-                opc.shuffle(rng);
+        //         // generate a new random card order
+        //         opc.shuffle(rng);
 
-                opc.iter().for_each(|c| {
-                    // search a player that may get this card
-                    players
-                        .iter_mut()
-                        .enumerate()
-                        // check if the player has enough cards
-                        // this should also automatically eliminate the current player
-                        .filter(|(i, p)| p.get_num_cards() < num_cards[*i])
-                        // check if the card is in the possible cards
-                        .filter(|(i, p)| match subsets[*i].binary_search(&c.rank) {
-                            Result::Ok(ri) => true,
-                            Result::Err(ri) => false,
-                        })
-                        .for_each(|(i, p)| {
-                            p.data_mut().hand.push(c.clone());
-                        });
-                });
+        //         opc.iter().for_each(|c| {
+        //             // search a player that may get this card
+        //             players
+        //                 .iter_mut()
+        //                 .enumerate()
+        //                 // check if the player has enough cards
+        //                 // this should also automatically eliminate the current player
+        //                 .filter(|(i, p)| p.get_num_cards() < num_cards[*i])
+        //                 // check if the card is in the possible cards
+        //                 .filter(|(i, p)| match subsets[*i].binary_search(&c.rank) {
+        //                     Result::Ok(ri) => true,
+        //                     Result::Err(ri) => false,
+        //                 })
+        //                 .for_each(|(i, p)| {
+        //                     p.data_mut().hand.push(c.clone());
+        //                 });
+        //         });
 
-                // TODO: check if this card constellation was already cached
+        //         // TODO: check if this card constellation was already cached
 
-                // did all players get enough cards?
-                valid = players
-                    .iter()
-                    .enumerate()
-                    .all(|(i, p)| p.get_num_cards() == num_cards[i]);
+        //         // did all players get enough cards?
+        //         valid = players
+        //             .iter()
+        //             .enumerate()
+        //             .all(|(i, p)| p.get_num_cards() == num_cards[i]);
 
-                c += 1;
-            }
-            if valid == false {
-                panic!("Distribution failed");
-            }
-        }
+        //         c += 1;
+        //     }
+        //     if valid == false {
+        //         panic!("Distribution failed");
+        //     }
+        // }
 
         pub fn simulate(
             current_match: &Match,
@@ -1642,6 +1749,7 @@ pub mod game {
             players: &DynPlayers,
             max_depth: usize,
             rng: &mut RngType,
+            ab_prune: bool,
         ) -> (RankType, i32) {
             // create a LUT for cards
             let mut card_lut = current_match.deck.clone();
@@ -1670,6 +1778,7 @@ pub mod game {
                 current_round,
                 max_depth,
                 &card_lut,
+                ab_prune,
             );
         }
 
@@ -1679,6 +1788,7 @@ pub mod game {
             current_round: &Round,
             max_depth: usize,
             card_lut: &Vec<Card>,
+            ab_prune: bool,
         ) -> (RankType, i32) {
             // we call the depth first search minimax algorithm for every possible card
             // and return the move with the best score
@@ -1712,7 +1822,7 @@ pub mod game {
                 players[current_round.current_player].remove_card_from_hand(&c);
 
                 // when returning from minimax, last card will be pushed into players hand again
-                let best_score = minimax(&mut nodes, players, max_depth, &card_lut);
+                let best_score = minimax(&mut nodes, players, max_depth, &card_lut, ab_prune);
 
                 (bm.rank, bm.score) = get_score_for_player(
                     bm.score,
@@ -1732,6 +1842,7 @@ pub mod game {
             players: &mut Vec<SimulatedPlayer>,
             max_depth: usize,
             card_lut: &Vec<Card>,
+            ab_prune: bool,
         ) -> i32 {
             // iterative approach to minimax expanding the tree of played cards
             // re is the maximizer, contra is the minimizer
@@ -1740,9 +1851,9 @@ pub mod game {
             let cpr = players.len(); // cards per round
             let cig = card_lut.len() * 2; // cards in game
 
-            let max_cards_to_play: usize = players.iter().map(|p| p.get_num_cards()).sum();
+            let cards_to_play: usize = players.iter().map(|p| p.get_num_cards()).sum();
 
-            let _max_depth = max_cards_to_play.min(max_depth);
+            let max_depth_int = cards_to_play.min(max_depth); // internal max depth
 
             if nodes.len() == 0 {
                 panic!("No nodes in tree to evaluate");
@@ -1754,48 +1865,11 @@ pub mod game {
                 let mut current_node = nodes.pop().unwrap();
                 let cnd = current_node.depth as usize; // current node depth
 
-                // println!("current node: {:?}", current_node);
-                if cnd == _max_depth && current_node.visited == false {
-                    // go through the nodes and collect the cards won by each team
-                    let mut re_score = 0;
-                    let mut contra_score = 0;
-                    let mut starting_player = match nodes.first() {
-                        Some(n) => n.current_player,
-                        None => current_node.current_player,
-                    };
-                    // cards played in this round
-                    let mut round_cards = Vec::new();
-
-                    for n in &*nodes {
-                        let card = &card_lut[n.rank as usize - 1];
-
-                        round_cards.push(card.clone());
-
-                        if round_cards.len() == cpr {
-                            let winner =
-                                Round::determine_winner(&round_cards, starting_player).unwrap();
-
-                            if players[winner].data().team == Team::Re {
-                                re_score += round_cards.iter().map(|c| c.eyes as i32).sum::<i32>();
-                            } else {
-                                contra_score +=
-                                    round_cards.iter().map(|c| c.eyes as i32).sum::<i32>();
-                            }
-                            starting_player = winner;
-                            round_cards.clear();
-                        }
-                    }
-
-                    if re_score == i32::MIN || contra_score == i32::MAX {
-                        panic!(
-                            "Invalid scores: re_score: {}, contra_score: {}, depth: {}",
-                            re_score, contra_score, cnd
-                        );
-                    }
-
+                if cnd == max_depth_int && current_node.visited == false {
                     // simple score: difference of won eyes per team
                     // set the score of the predecessor
-                    current_node.score = re_score - contra_score;
+                    current_node.score =
+                        get_score_from_nodes(nodes, &current_node, players, card_lut);
                     current_node.visited = true;
                     nodes.push(current_node.clone());
                 } else if current_node.cards_to_play.len() == 0 && current_node.visited == true {
@@ -1811,29 +1885,32 @@ pub mod game {
                         // if this is the first node we are evaluating
                         return current_node.score;
                     } else {
+                        // we need to update last node
                         let last_node = nodes.last_mut().unwrap();
+                        let team = players[last_node.current_player].data().team;
 
                         if current_node.score == i32::MIN || current_node.score == i32::MAX {
                             panic!("Invalid score: {}, depth: {}", current_node.score, cnd);
                         }
-                        let team = players[last_node.current_player].data().team;
 
-                        /* ALPHA-BETA pruning */
                         // we update the above score
                         (_, last_node.score) =
                             get_score_for_team(last_node.score, current_node.score, 0, 0, team);
 
-                        // update alpha and beta values
-                        (last_node.alpha, last_node.beta) = get_alpha_beta_for_team(
-                            last_node.alpha,
-                            last_node.beta,
-                            current_node.score,
-                            team,
-                        );
+                        /* ALPHA-BETA pruning */
+                        if ab_prune {
+                            // update alpha and beta values
+                            (last_node.alpha, last_node.beta) = get_alpha_beta_for_team(
+                                last_node.alpha,
+                                last_node.beta,
+                                current_node.score,
+                                team,
+                            );
 
-                        if is_branch_prunable(last_node.alpha, last_node.beta, team) {
-                            // prune by removing the other possible moves
-                            last_node.cards_to_play.clear();
+                            if is_branch_prunable(last_node.alpha, last_node.beta, team) {
+                                // prune by removing the other possible moves
+                                last_node.cards_to_play.clear();
+                            }
                         }
                         /* ALPHA-BETA pruning */
                     }
@@ -1852,33 +1929,12 @@ pub mod game {
                         // the next player could play
                         // this is the first time we visit this node
 
-                        // get the possible cards from the tree
-                        if played_cards.len() == cpr {
-                            // next player is the winner
-                            // next player may play any card
-                            let next_player = Round::determine_winner(
-                                &played_cards,
-                                cpr - current_node.current_player - 1,
-                            )
-                            .unwrap();
-
-                            current_node.cards_to_play = players[next_player]
-                                .data()
-                                .hand
-                                .iter()
-                                .map(|c| c.rank)
-                                .collect();
-                        } else {
-                            // get possible cards from played cards
-                            let next_player = (current_node.current_player + 1) % cpr;
-                            current_node.cards_to_play = Round::filter_possible_cards(
-                                &played_cards,
-                                &players[next_player].data().hand,
-                            )
-                            .iter()
-                            .map(|c| c.rank)
-                            .collect::<Vec<RankType>>();
-                        }
+                        // get the possible cards from the tree, sort them by likeliness to be good
+                        current_node.cards_to_play = filter_sort_possible_cards(
+                            &played_cards,
+                            players,
+                            current_node.current_player,
+                        );
 
                         if current_node.cards_to_play.len() > 0 {
                             current_node.visited = true;
@@ -1892,14 +1948,8 @@ pub mod game {
 
                         nodes.push(current_node);
                     } else {
-                        let next_player = match played_cards.len() == cpr {
-                            true => Round::determine_winner(
-                                &played_cards,
-                                cpr - current_node.current_player - 1,
-                            )
-                            .unwrap(),
-                            false => (current_node.current_player + 1) % cpr,
-                        };
+                        let next_player =
+                            get_next_player(&played_cards, cpr, current_node.current_player);
 
                         // remove card from possible cards
                         let rc = card_lut[current_node.cards_to_play.pop().unwrap() as usize - 1];
